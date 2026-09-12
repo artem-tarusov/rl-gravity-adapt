@@ -1,0 +1,15 @@
+environment:
+  gravity: [0.0, 0.0, -9.81]
+  num_envs: 4
+  max_episode_steps: 1000
+
+model:
+  actor_hidden_sizes: [256, 256]
+  critic_hidden_sizes: [256, 256]
+
+run:
+  name: earth_baseline
+  seed: 42
+  device: cpu
+  output_dir: runs
+  torch_threads: 1

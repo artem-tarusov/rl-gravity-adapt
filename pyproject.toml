@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gravity-adapt"
+version = "0.1.0"
+description = "Humanoid locomotion policy adaptation across gravity regimes"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "gymnasium[mujoco]>=1.2,<2",
+    "mujoco>=3.3,<4",
+    "torch>=2.7,<3",
+    "numpy>=2.2,<3",
+    "PyYAML>=6,<7",
+    "tyro>=0.9,<2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+
+[project.scripts]
+gravity-adapt-smoke = "gravity_adapt.smoke:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gravity_adapt*"]
+namespaces = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--import-mode=importlib"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

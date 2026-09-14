@@ -6,10 +6,11 @@ and critic MLPs. The environment is fixed to `Humanoid-v5` in the code.
 The planned study compares training from scratch, full
 fine-tuning, and LoRA adaptation.
 
-The current implementation provides configuration, environment creation, actor/critic
-networks, run metadata, and a short rollout with an untrained policy. PPO training,
-observation/reward normalization for training, checkpoints, and independent policy
-evaluation will be added in subsequent stages.
+The current implementation provides configuration, Humanoid environments, actor/critic
+networks, run metadata, a smoke check, and normalized experience collection for PPO.
+The training entry point currently collects experience with an untrained policy.
+PPO updates, resumable training checkpoints, and independent policy evaluation will
+be added in subsequent stages.
 
 ## Setup
 
@@ -68,15 +69,19 @@ gravity_adapt/
     config.py       # YAML configuration, validation, and CLI overrides
     envs.py         # Humanoid creation, gravity, action clipping, vectorization
     models.py       # Gaussian actor and separate value network
+    normalization.py # Shared observation and discounted-return statistics
     runs.py         # Run directories, metadata, and lifecycle
     smoke.py        # Short rollout with an untrained policy
+    train.py        # Training entry point and rollout collection
 configs/
     earth.yaml
 tests/
     test_config.py
     test_envs.py
     test_models.py
+    test_normalization.py
     test_smoke.py
+    test_train.py
 runs/               # Generated locally; ignored by Git
 ```
 
@@ -123,6 +128,52 @@ It records handled failures or interruptions in the run metadata. A process kill
 without cleanup may leave its status as `running`. A successful smoke check verifies
 integration; the policy has not been trained to walk.
 
+## PPO experience collection
+
+```bash
+python -m gravity_adapt.train --config configs/earth.yaml
+gravity-adapt-train --config configs/earth.yaml --ppo.total-steps 1024 --ppo.rollout-steps 128
+```
+
+Smoke and training use the same `Config` and `earth.yaml`, including the required `ppo`
+section. The smoke check does not use PPO settings. Both commands accept YAML/CLI
+overrides; use `--config configs/earth.yaml --help` to list available options.
+Reinstall the editable package after pulling changes that add console commands.
+
+`ppo.total_steps` counts transitions across all environments and must be divisible
+by `environment.num_envs`. `ppo.rollout_steps` counts steps per environment in each
+rollout. The supplied configuration collects two rollouts of 2,048 vector steps,
+for 16,384 transitions in total. A smaller final rollout uses the remaining budget.
+Only `total_steps`, `rollout_steps`, and `gamma` are used at this stage; the other
+PPO settings define the subsequent optimizer implementation. No weights are updated.
+
+Observations are centered and scaled using statistics shared across the vector
+environments. Rewards are divided by the running standard deviation of discounted
+returns; the return accumulator resets after either termination or truncation.
+Both normalized observations and rewards are clipped to `[-10, 10]`, with `1e-8`
+added to variance before taking the square root. Normalization statistics can be
+saved, restored, and frozen with `update=False` for evaluation.
+
+The collector keeps tensors with leading dimensions `[rollout_steps, num_envs]`:
+observations, next observations, actions, action log probabilities, critic values,
+normalized rewards, raw rewards, and separate termination/truncation flags.
+Stored observations are the exact normalized inputs used by the policy. Actions
+and log probabilities describe the original Gaussian samples, before action clipping.
+For completed episodes, stored next observations come from `info["final_obs"]` and
+use the current normalization statistics without updating them. The next policy
+call receives the reset observation. Environments and normalization state continue
+across rollout boundaries.
+
+Each collection run saves its configuration, metadata, and `rollout.pt`. This
+diagnostic snapshot contains only the last rollout, the untrained model state, and
+normalization state, and can be read with `torch.load(path, weights_only=True)`.
+It is not a resumable training checkpoint. Per-episode CSV logging and PPO updates
+are subsequent implementation steps.
+
+PPO settings and normalization conventions use
+[CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)
+as a reference. Running statistics use Gymnasium's `RunningMeanStd` implementation.
+
 ## Development checks
 
 ```bash
@@ -134,6 +185,8 @@ ruff format --check .
 The tests focus on configuration overrides and essential validation, gravity
 persistence, seeded resets, action clipping, final observations, Gaussian log
 probabilities, actor/critic gradients, and a short MuJoCo rollout with saved
-experiment parameters and results.
+experiment parameters and results. Collection checks cover final observations,
+unclipped action probabilities, normalization freezing/restoration, and continuity
+between rollouts.
 
 Environment behavior follows the [Gymnasium Humanoid documentation](https://gymnasium.farama.org/environments/mujoco/humanoid/).

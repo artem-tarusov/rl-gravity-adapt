@@ -22,6 +22,7 @@ dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
 
 [project.scripts]
 gravity-adapt-smoke = "gravity_adapt.smoke:main"
+gravity-adapt-train = "gravity_adapt.train:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

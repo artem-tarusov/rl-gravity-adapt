@@ -34,21 +34,38 @@ class RunConfig:
 
 
 @dataclass
+class PPOConfig:
+    total_steps: int
+    rollout_steps: int
+    minibatch_size: int
+    update_epochs: int
+    learning_rate: float
+    gamma: float
+    gae_lambda: float
+    clip_coef: float
+    entropy_coef: float
+    critic_loss_weight: float
+    max_grad_norm: float
+
+
+@dataclass
 class Config:
     environment: EnvironmentConfig
     model: ModelConfig
     run: RunConfig
+    ppo: PPOConfig
 
 
 def load_config(path: Path) -> Config:
     data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    unknown = data.keys() - {"environment", "model", "run"}
+    unknown = data.keys() - {"environment", "model", "run", "ppo"}
     if unknown:
         raise ValueError(f"Unknown configuration sections: {', '.join(sorted(map(str, unknown)))}")
     return Config(
         environment=EnvironmentConfig(**data["environment"]),
         model=ModelConfig(**data["model"]),
         run=RunConfig(**data["run"]),
+        ppo=PPOConfig(**data["ppo"]),
     )
 
 
@@ -61,6 +78,5 @@ def parse_config(args: list[str] | None = None) -> Config:
         Config,
         args=remaining,
         default=load_config(known.config),
-        prog="gravity-adapt-smoke",
-        description="Check an untrained policy. Load all experiment settings with --config PATH.",
+        description="Load all experiment settings with --config PATH, then apply CLI overrides.",
     )

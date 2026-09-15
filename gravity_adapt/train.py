@@ -9,6 +9,7 @@ from gravity_adapt.config import Config, parse_config
 from gravity_adapt.envs import make_vector_env
 from gravity_adapt.models import ActorCritic
 from gravity_adapt.normalization import Normalizer
+from gravity_adapt.ppo import update_ppo
 from gravity_adapt.runs import Run, create_run, finish_run
 
 
@@ -19,7 +20,7 @@ def collect_rollout(
     normalizer: Normalizer,
     observations: Tensor,
     steps: int,
-) -> tuple[dict[str, Tensor], Tensor]:
+) -> tuple[dict[str, Tensor], Tensor, float | None]:
     device = observations.device
     shape = (steps, envs.num_envs)
     observation_shape = (*shape, envs.single_observation_space.shape[0])
@@ -35,6 +36,7 @@ def collect_rollout(
         "terminated": torch.empty(shape, dtype=torch.bool, device=device),
         "truncated": torch.empty(shape, dtype=torch.bool, device=device),
     }
+    episode_returns = []
     for step in range(steps):
         actions, log_probs, _, values = model.get_action_and_value(observations)
         rollout["observations"][step] = observations
@@ -51,6 +53,7 @@ def collect_rollout(
         observations = torch.as_tensor(normalizer.normalize_observations(next_observations), device=device)
         rollout["next_observations"][step] = observations
         if done.any():
+            episode_returns.extend(info["final_info"]["episode"]["r"][done].tolist())
             # SAME_STEP returns reset observations; PPO needs the preceding episode's final state.
             final_observations = np.stack(info["final_obs"][done])
             rollout["next_observations"][step, torch.as_tensor(done, device=device)] = (
@@ -59,7 +62,8 @@ def collect_rollout(
                     device=device,
                 )
             )
-    return rollout, observations
+    mean_return = float(np.mean(episode_returns)) if episode_returns else None
+    return rollout, observations, mean_return
 
 
 def run_training(config: Config) -> Run:
@@ -67,7 +71,6 @@ def run_training(config: Config) -> Run:
         raise ValueError("ppo.total_steps must be divisible by environment.num_envs")
     run = create_run(config)
     print(f"Run directory: {run.directory}", flush=True)
-    print("Collecting experience only; PPO updates are not implemented yet.", flush=True)
     try:
         torch.set_num_threads(config.run.torch_threads)
         torch.manual_seed(config.run.seed)
@@ -85,19 +88,26 @@ def run_training(config: Config) -> Run:
                 envs.single_action_space.shape[0],
                 config.model,
             ).to(device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=config.ppo.learning_rate, eps=1e-5)
             total_vector_steps = config.ppo.total_steps // envs.num_envs
             completed_episodes = 0
             rollouts = 0
             for start in range(0, total_vector_steps, config.ppo.rollout_steps):
                 steps = min(config.ppo.rollout_steps, total_vector_steps - start)
-                rollout, observations = collect_rollout(envs, model, normalizer, observations, steps)
+                rollout, observations, mean_return = collect_rollout(envs, model, normalizer, observations, steps)
+                metrics = update_ppo(model, optimizer, rollout, config.ppo)
                 completed_episodes += int(
                     (rollout["terminated"] | rollout["truncated"]).sum().item()
                 )
                 rollouts += 1
                 environment_steps = (start + steps) * envs.num_envs
+                reward = f"{mean_return:.2f}" if mean_return is not None else "n/a"
                 print(
-                    f"Collected {environment_steps}/{config.ppo.total_steps} transitions",
+                    f"Trained on {environment_steps}/{config.ppo.total_steps} transitions | "
+                    f"mean_episode_return={reward} | "
+                    f"policy_loss={metrics['policy_loss']:.4f} | "
+                    f"critic_loss={metrics['critic_loss']:.4f} | "
+                    f"entropy={metrics['entropy']:.4f}",
                     flush=True,
                 )
             torch.save(
@@ -112,11 +122,12 @@ def run_training(config: Config) -> Run:
             run,
             status="completed",
             result={
-                "kind": "experience_collection",
+                "kind": "ppo_training",
                 "environment_steps": environment_steps,
                 "rollouts": rollouts,
                 "last_rollout_steps": steps,
                 "completed_episodes": completed_episodes,
+                "last_minibatch": metrics,
             },
         )
     except KeyboardInterrupt:

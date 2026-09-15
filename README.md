@@ -7,10 +7,10 @@ The planned study compares training from scratch, full
 fine-tuning, and LoRA adaptation.
 
 The current implementation provides configuration, Humanoid environments, actor/critic
-networks, run metadata, a smoke check, and normalized experience collection for PPO.
-The training entry point currently collects experience with an untrained policy.
-PPO updates, resumable training checkpoints, and independent policy evaluation will
-be added in subsequent stages.
+networks, run metadata, a smoke check, and PPO training with normalization and GAE.
+The training entry point alternates experience collection and actor/critic updates.
+Training logs, resumable checkpoints, and independent policy evaluation will be
+added in subsequent stages.
 
 ## Setup
 
@@ -70,6 +70,7 @@ gravity_adapt/
     envs.py         # Humanoid creation, gravity, action clipping, vectorization
     models.py       # Gaussian actor and separate value network
     normalization.py # Shared observation and discounted-return statistics
+    ppo.py          # GAE and PPO minibatch updates
     runs.py         # Run directories, metadata, and lifecycle
     smoke.py        # Short rollout with an untrained policy
     train.py        # Training entry point and rollout collection
@@ -80,6 +81,7 @@ tests/
     test_envs.py
     test_models.py
     test_normalization.py
+    test_ppo.py
     test_smoke.py
     test_train.py
 runs/               # Generated locally; ignored by Git
@@ -128,7 +130,7 @@ It records handled failures or interruptions in the run metadata. A process kill
 without cleanup may leave its status as `running`. A successful smoke check verifies
 integration; the policy has not been trained to walk.
 
-## PPO experience collection
+## PPO training
 
 ```bash
 python -m gravity_adapt.train --config configs/earth.yaml
@@ -144,8 +146,27 @@ Reinstall the editable package after pulling changes that add console commands.
 by `environment.num_envs`. `ppo.rollout_steps` counts steps per environment in each
 rollout. The supplied configuration collects two rollouts of 2,048 vector steps,
 for 16,384 transitions in total. A smaller final rollout uses the remaining budget.
-Only `total_steps`, `rollout_steps`, and `gamma` are used at this stage; the other
-PPO settings define the subsequent optimizer implementation. No weights are updated.
+After each rollout, GAE estimates advantages and critic targets from normalized
+rewards. Terminations have no value bootstrap. Time-limit truncations bootstrap
+from the episode's final observation; both boundaries stop the GAE recursion.
+An unfinished episode at a rollout boundary bootstraps from its next observation.
+This follows Gymnasium's [guidance on time limits](https://gymnasium.farama.org/tutorials/gymnasium_basics/handling_time_limits/).
+
+PPO shuffles the collected transitions for each of `update_epochs` passes and
+updates the model in groups of `minibatch_size`, including a smaller final group.
+Advantages are centered and divided by their population standard deviation within
+each minibatch, with `1e-8` added to the denominator. A singleton minibatch keeps
+its original advantage. Stored action log probabilities and critic targets stay
+fixed throughout these passes.
+
+The objective combines the clipped policy loss, `critic_loss_weight` times half
+the mean squared critic error, and the negative entropy bonus weighted by
+`entropy_coef`. The critic loss is not clipped. Adam uses the configured constant
+`learning_rate` and `eps=1e-5`; the combined gradient norm is limited by
+`max_grad_norm` before each optimizer step. The default configuration performs
+32 minibatch updates per epoch, 10 epochs per rollout, and two rollouts: 640
+optimizer steps in total. This is a short implementation check, not a full
+Humanoid training budget.
 
 Observations are centered and scaled using statistics shared across the vector
 environments. Rewards are divided by the running standard deviation of discounted
@@ -164,11 +185,23 @@ use the current normalization statistics without updating them. The next policy
 call receives the reset observation. Environments and normalization state continue
 across rollout boundaries.
 
-Each collection run saves its configuration, metadata, and `rollout.pt`. This
-diagnostic snapshot contains only the last rollout, the untrained model state, and
-normalization state, and can be read with `torch.load(path, weights_only=True)`.
-It is not a resumable training checkpoint. Per-episode CSV logging and PPO updates
-are subsequent implementation steps.
+Each console progress line includes the mean raw episode return for episodes that
+ended during that rollout, including rewards collected in earlier rollouts. It
+reports `n/a` if no episodes ended. The same line reports policy loss, critic loss,
+and entropy from the
+last minibatch of each PPO update. Final metadata also includes its approximate
+KL divergence and clipping fraction under `result.last_minibatch`. These values
+are computed before that minibatch's optimizer step, rather than averaged over
+the rollout or evaluated after all updates.
+
+Each training run saves its configuration, metadata, and `rollout.pt`. This
+diagnostic snapshot contains the last rollout with its GAE advantages and critic
+targets (`returns`), model weights after the final PPO update, and normalization
+state. The rollout's actions, log probabilities, and values were collected before
+that update, so the saved model generally produces different predictions.
+Read the snapshot with `torch.load(path, weights_only=True)`. It is not a resumable
+training checkpoint; optimizer and random-number generator states are not saved.
+CSV logging and resumable checkpoints are subsequent implementation steps.
 
 PPO settings and normalization conventions use
 [CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)
@@ -187,6 +220,8 @@ persistence, seeded resets, action clipping, final observations, Gaussian log
 probabilities, actor/critic gradients, and a short MuJoCo rollout with saved
 experiment parameters and results. Collection checks cover final observations,
 unclipped action probabilities, normalization freezing/restoration, and continuity
-between rollouts.
+between rollouts. PPO checks cover hand-calculated GAE targets, clipping gradients,
+entropy and critic loss weights, partial minibatches, optimizer step counts, and
+changes to both actor and critic weights.
 
 Environment behavior follows the [Gymnasium Humanoid documentation](https://gymnasium.farama.org/environments/mujoco/humanoid/).

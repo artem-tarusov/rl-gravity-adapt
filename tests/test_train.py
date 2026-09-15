@@ -10,6 +10,7 @@ from gymnasium.vector import AutoresetMode, SyncVectorEnv
 from gravity_adapt.config import ModelConfig, load_config
 from gravity_adapt.models import ActorCritic
 from gravity_adapt.normalization import Normalizer
+from gravity_adapt.ppo import update_ppo
 from gravity_adapt.train import collect_rollout, run_training
 
 
@@ -41,8 +42,12 @@ def test_rollout_preserves_actions_final_states_and_continuity():
     with closing(
         SyncVectorEnv(
             [
-                lambda: gym.wrappers.ClipAction(BoundaryEnv(terminate=True)),
-                lambda: gym.wrappers.ClipAction(BoundaryEnv(terminate=False)),
+                lambda: gym.wrappers.ClipAction(
+                    gym.wrappers.RecordEpisodeStatistics(BoundaryEnv(terminate=True))
+                ),
+                lambda: gym.wrappers.ClipAction(
+                    gym.wrappers.RecordEpisodeStatistics(BoundaryEnv(terminate=False))
+                ),
             ],
             autoreset_mode=AutoresetMode.SAME_STEP,
         )
@@ -50,7 +55,7 @@ def test_rollout_preserves_actions_final_states_and_continuity():
         normalizer = Normalizer(1, 2, gamma=0.99)
         raw_observations, _ = envs.reset(seed=42)
         observations = torch.as_tensor(normalizer.normalize_observations(raw_observations))
-        rollout, next_observations = collect_rollout(envs, model, normalizer, observations, steps=2)
+        rollout, next_observations, _ = collect_rollout(envs, model, normalizer, observations, steps=2)
         assert rollout["observations"].shape == (2, 2, 1)
         assert rollout["terminated"].tolist() == [[True, False], [True, False]]
         assert rollout["truncated"].tolist() == [[False, False], [False, True]]
@@ -67,7 +72,7 @@ def test_rollout_preserves_actions_final_states_and_continuity():
         )
         assert not torch.allclose(rollout["next_observations"][-1], next_observations)
         assert np.isclose(normalizer.observation_stats.count, 6.0001)
-        following, _ = collect_rollout(envs, model, normalizer, next_observations, steps=1)
+        following, _, _ = collect_rollout(envs, model, normalizer, next_observations, steps=1)
         torch.testing.assert_close(following["observations"][0], next_observations)
         assert np.isclose(normalizer.observation_stats.count, 8.0001)
         assert all(
@@ -77,7 +82,7 @@ def test_rollout_preserves_actions_final_states_and_continuity():
         torch.testing.assert_close(value, original_weights[name], rtol=0, atol=0)
 
 
-def test_collection_saves_last_partial_rollout_and_normalization(tmp_path):
+def test_training_updates_weights_and_saves_last_partial_rollout(tmp_path, monkeypatch):
     path = Path(__file__).resolve().parents[1] / "configs" / "earth.yaml"
     config = load_config(path)
     config.environment.num_envs = 2
@@ -86,29 +91,60 @@ def test_collection_saves_last_partial_rollout_and_normalization(tmp_path):
     config.run.output_dir = str(tmp_path)
     config.ppo.total_steps = 10
     config.ppo.rollout_steps = 3
+    config.ppo.minibatch_size = 3
+    config.ppo.update_epochs = 2
+    updates = []
+
+    def record_update(model, optimizer, rollout, ppo_config):
+        before = {name: value.clone() for name, value in model.state_dict().items()}
+        metrics = update_ppo(model, optimizer, rollout, ppo_config)
+        grad_norm = torch.cat([parameter.grad.flatten() for parameter in model.parameters()]).norm()
+        assert grad_norm <= ppo_config.max_grad_norm + 1e-6
+        assert all(torch.isfinite(parameter).all() for parameter in model.parameters())
+        updates.append((before, {int(state["step"].item()) for state in optimizer.state.values()}))
+        return metrics
+
+    monkeypatch.setattr("gravity_adapt.train.update_ppo", record_update)
     run = run_training(config)
     assert load_config(run.directory / "config.yaml") == config
     metadata = json.loads((run.directory / "metadata.json").read_text())
     assert metadata["status"] == "completed"
+    metrics = metadata["result"].pop("last_minibatch")
+    assert all(np.isfinite(value) for value in metrics.values())
     assert metadata["result"] == {
-        "kind": "experience_collection",
+        "kind": "ppo_training",
         "environment_steps": 10,
         "rollouts": 2,
         "last_rollout_steps": 2,
         "completed_episodes": 10,
     }
+    assert [steps for _, steps in updates] == [{4}, {8}]
     snapshot = torch.load(run.directory / "rollout.pt", weights_only=True)
     rollout = snapshot["rollout"]
     assert rollout["observations"].shape == (2, 2, 348)
     assert rollout["actions"].shape == (2, 2, 17)
     assert rollout["truncated"].all()
+    assert rollout["advantages"].shape == rollout["returns"].shape == (2, 2)
+    assert all(torch.isfinite(tensor).all() for tensor in rollout.values())
     assert np.isclose(snapshot["normalization"]["observation_count"], 12.0001)
     model = ActorCritic(348, 17, config.model)
-    model.load_state_dict(snapshot["model"])
+    model.load_state_dict(updates[-1][0])
     torch.testing.assert_close(model.critic(rollout["observations"]), rollout["values"])
+    torch.testing.assert_close(
+        rollout["returns"],
+        rollout["rewards"] + config.ppo.gamma * model.critic(rollout["next_observations"]),
+    )
     torch.testing.assert_close(
         model.actor(rollout["observations"]).log_prob(rollout["actions"]), rollout["log_probs"]
     )
+    model.load_state_dict(snapshot["model"])
+    for prefix in ("actor.", "critic."):
+        assert any(
+            not torch.equal(value, updates[0][0][name])
+            for name, value in model.state_dict().items()
+            if name.startswith(prefix)
+        )
+    assert not torch.equal(model.actor.log_std, updates[0][0]["actor.log_std"])
     normalizer = Normalizer(348, 2, config.ppo.gamma)
     normalizer.load_state_dict(snapshot["normalization"])
     assert normalizer.state_dict() == snapshot["normalization"]

@@ -18,7 +18,7 @@ def test_smoke_counts_real_transitions_across_resets(tmp_path):
     metadata = json.loads((run.directory / "metadata.json").read_text())
     assert metadata["status"] == "completed"
     assert metadata["result"]["vector_steps"] == 3
-    assert metadata["result"]["environment_steps"] == 6
+    assert metadata["result"]["env_steps"] == 6
     assert metadata["result"]["completed_episodes"] == 6
     assert metadata["result"]["episode_lengths"] == [1] * 6
     assert metadata["result"]["observation_size"] == 348

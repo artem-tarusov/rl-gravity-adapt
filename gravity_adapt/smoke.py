@@ -47,18 +47,18 @@ def run_smoke(config: Config, steps: int = 128) -> Run:
                         completed_returns.extend(episode["r"][done].tolist())
                         completed_lengths.extend(episode["l"][done].tolist())
             elapsed = monotonic() - started
-            environment_steps = steps * envs.num_envs
+            env_steps = steps * envs.num_envs
             result = {
                 "kind": "untrained_policy_smoke",
                 "observation_size": observation_size,
                 "action_size": action_size,
                 "vector_steps": steps,
-                "environment_steps": environment_steps,
+                "env_steps": env_steps,
                 "completed_episodes": len(completed_returns),
                 "episode_returns": completed_returns,
                 "episode_lengths": completed_lengths,
                 "rollout_seconds": elapsed,
-                "steps_per_second": environment_steps / elapsed,
+                "steps_per_second": env_steps / elapsed,
                 "actor_parameters": sum(p.numel() for p in model.actor.parameters()),
                 "critic_parameters": sum(p.numel() for p in model.critic.parameters()),
                 "autoreset_mode": envs.autoreset_mode.value,
@@ -71,7 +71,7 @@ def run_smoke(config: Config, steps: int = 128) -> Run:
         finish_run(run, status="failed", error=f"{type(error).__name__}: {error}")
         raise
     print(
-        f"Smoke check passed: {environment_steps} environment steps; "
+        f"Smoke check passed: {env_steps} environment steps; "
         f"completed episodes: {len(completed_returns)}."
     )
     return run

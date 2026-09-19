@@ -9,8 +9,8 @@ fine-tuning, and LoRA adaptation.
 The current implementation provides configuration, Humanoid environments, actor/critic
 networks, run metadata, a smoke check, and PPO training with normalization and GAE.
 The training entry point alternates experience collection and actor/critic updates.
-Training writes CSV logs for episodes and PPO updates. Resumable checkpoints and
-independent policy evaluation will be added next.
+Training writes CSV logs and checkpoints that can restore model and optimizer
+state in a new run. Independent policy evaluation will be added next.
 
 ## Setup
 
@@ -66,6 +66,7 @@ regular, non-editable installation of this package.
 ```text
 gravity_adapt/
     __init__.py
+    checkpoints.py  # Training state, RNG restoration, and checkpoint replacement
     config.py       # YAML configuration, validation, and CLI overrides
     envs.py         # Humanoid creation, gravity, action clipping, vectorization
     logging.py      # Training CSV logs and console progress
@@ -78,6 +79,7 @@ gravity_adapt/
 configs/
     earth.yaml
 tests/
+    test_checkpoints.py
     test_config.py
     test_envs.py
     test_models.py
@@ -178,7 +180,7 @@ saved, restored, and frozen with `update=False` for evaluation.
 
 The collector keeps tensors with leading dimensions `[rollout_steps, num_envs]`:
 observations, next observations, actions, action log probabilities, critic values,
-normalized rewards, raw rewards, and separate termination/truncation flags.
+normalized rewards, and separate termination/truncation flags.
 Stored observations are the exact normalized inputs used by the policy. Actions
 and log probabilities describe the original Gaussian samples, before action clipping.
 For completed episodes, stored next observations come from `info["final_obs"]` and
@@ -194,7 +196,7 @@ size. Approximate KL, clipping fraction, and the gradient norm before clipping u
 the same averaging. These are measurements during optimization, not a separate
 evaluation of the final policy. Final metadata stores them under `result.last_update`.
 
-### Training logs
+### Logs and checkpoints
 
 Alongside `config.yaml` and `metadata.json`, each training run writes:
 
@@ -202,23 +204,61 @@ Alongside `config.yaml` and `metadata.json`, each training run writes:
   rollout and environment-step counters, cumulative completed episodes, elapsed
   time, collection and update durations, and the six PPO metrics described above.
   Compute throughput during analysis from the increase in `env_steps` divided by
-  `rollout_seconds + update_seconds`. The constant learning rate is in `config.yaml`.
+  `rollout_seconds + update_seconds`, using the saved checkpoint counter as the
+  starting value for resumed runs. The constant learning rate is in `config.yaml`.
 - `episodes.csv`: one row per completed episode, with its global episode number,
   environment-step counter at completion, environment index, raw return, length,
   and termination/truncation flags. Returns include the full episode even when it
   spans multiple rollouts; normalization does not change these reported rewards.
   Compute episode averages from this file during analysis; they are not stored
   in `metrics.csv`. Mean episode return is still shown in the console.
+- `checkpoint.pt`: the latest model and Adam states, normalization statistics and
+  accumulators, configuration, training counters, cumulative elapsed time, and
+  PyTorch CPU and active-device RNG states. Adam's state includes its step counts,
+  moments, and constant learning rate; there is no learning-rate scheduler yet.
 
-CSV files are flushed after each update.
+CSV files are flushed after each update. The checkpoint is then written to a
+temporary file and replaces the previous checkpoint only after serialization
+succeeds. An interruption leaves the previous completed checkpoint available;
+the first checkpoint appears after the first completed update. There is one latest
+checkpoint per run, and the old diagnostic `rollout.pt` is no longer written.
+Read checkpoints with `torch.load(path, map_location="cpu", weights_only=True)`.
 
-Each training run saves its configuration, metadata, and `rollout.pt`. This
-diagnostic snapshot contains the last rollout with its GAE advantages and critic
-targets (`returns`), model weights after the final PPO update, and normalization
-state. The rollout's actions, log probabilities, and values were collected before
-that update, so the saved model generally produces different predictions.
-Read the snapshot with `torch.load(path, weights_only=True)`. It is not a resumable
-training checkpoint; optimizer and random-number generator states are not saved.
+### Resume training
+
+Use the saved configuration to preserve the settings of the original run:
+
+```bash
+python -m gravity_adapt.train \
+    --config runs/RUN_ID/config.yaml \
+    --resume runs/RUN_ID/checkpoint.pt \
+    --ppo.total-steps 32768
+```
+
+Replace `RUN_ID` with the source run directory name. `--resume` is a training CLI
+argument, not a YAML field. Python callers can use `run_training(config, resume=path)`.
+`ppo.total_steps` remains the total budget including already completed transitions:
+resuming at 16,384 with a target of 32,768 collects another 16,384 transitions.
+The target must exceed the saved counter. Environment, model, PPO settings other
+than the total budget, and seed must match the checkpoint. Run name, output
+directory, device, and thread count may change.
+
+Resuming creates a new run directory and records the source path in
+`metadata.json` as `resumed_from`. Existing artifacts are preserved. New CSV files
+contain only the continuation, with cumulative counters and elapsed time carried
+forward; join them with the source logs to plot the full training history.
+Use the checkpoint counter as the restart boundary if an interrupted run has CSV
+rows beyond its last successful checkpoint. Idle time between runs is excluded.
+
+Model, optimizer, normalization statistics, and available matching-device PyTorch
+RNG states are restored. MuJoCo states and environment RNG states are not restored:
+all environments start fresh episodes using `run.seed + saved_env_steps`.
+Reward accumulators are cleared and reset observations update the existing
+observation statistics. Unfinished episodes from the source run are not logged
+as completed episodes. Resume therefore continues optimization without reproducing
+the exact uninterrupted trajectory; changing devices can also change random
+sequences and numerical results. Evaluation will use frozen observation statistics
+in a subsequent stage.
 
 PPO settings and normalization conventions use
 [CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)
@@ -240,7 +280,8 @@ unclipped action probabilities, normalization freezing/restoration, and continui
 between rollouts. PPO checks cover hand-calculated GAE targets, clipping gradients,
 entropy and critic loss weights, partial minibatches, optimizer step counts, and
 changes to both actor and critic weights.
-Logging checks cover raw episode statistics, weighted PPO metrics, CSV rows,
-and console episode returns.
+Logging and checkpoint checks cover raw episode statistics, weighted PPO metrics,
+restoration of Adam and RNG state, continuation counters, fresh episodes on resume,
+and preservation of the previous checkpoint when writing is interrupted.
 
 Environment behavior follows the [Gymnasium Humanoid documentation](https://gymnasium.farama.org/environments/mujoco/humanoid/).

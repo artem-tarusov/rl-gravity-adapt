@@ -71,8 +71,7 @@ def test_rollout_preserves_actions_final_states_and_continuity():
         assert rollout["terminated"].tolist() == [[True, False], [True, False]]
         assert rollout["truncated"].tolist() == [[False, False], [False, True]]
         assert (rollout["actions"] > 0.4).all()
-        torch.testing.assert_close(rollout["raw_rewards"], torch.full((2, 2), 0.4))
-        assert not torch.allclose(rollout["rewards"], rollout["raw_rewards"])
+        assert not torch.allclose(rollout["rewards"], torch.full((2, 2), 0.4))
         distribution = model.actor(rollout["observations"])
         torch.testing.assert_close(distribution.log_prob(rollout["actions"]), rollout["log_probs"])
         torch.testing.assert_close(model.critic(rollout["observations"]), rollout["values"])
@@ -98,7 +97,7 @@ def test_rollout_preserves_actions_final_states_and_continuity():
         torch.testing.assert_close(value, original_weights[name], rtol=0, atol=0)
 
 
-def test_training_logs_updates_and_episodes_and_saves_last_rollout(tmp_path, monkeypatch, capsys):
+def test_training_logs_updates_and_episodes_and_saves_checkpoint(tmp_path, monkeypatch, capsys):
     path = Path(__file__).resolve().parents[1] / "configs" / "earth.yaml"
     config = load_config(path)
     config.environment.num_envs = 2
@@ -138,8 +137,8 @@ def test_training_logs_updates_and_episodes_and_saves_last_rollout(tmp_path, mon
         "completed_episodes": 10,
     }
     assert [steps for _, steps, _ in updates] == [{4}, {8}]
-    snapshot = torch.load(run.directory / "rollout.pt", weights_only=True)
-    rollout = snapshot["rollout"]
+    snapshot = torch.load(run.directory / "checkpoint.pt", weights_only=True)
+    rollout = updates[-1][2]
     assert rollout["observations"].shape == (2, 2, 348)
     assert rollout["actions"].shape == (2, 2, 17)
     assert rollout["truncated"].all()
@@ -167,6 +166,8 @@ def test_training_logs_updates_and_episodes_and_saves_last_rollout(tmp_path, mon
     normalizer = Normalizer(348, 2, config.ppo.gamma)
     normalizer.load_state_dict(snapshot["normalization"])
     assert normalizer.state_dict() == snapshot["normalization"]
+    assert {int(state["step"].item()) for state in snapshot["optimizer"]["state"].values()} == {8}
+    assert snapshot["progress"]["env_steps"] == 10
     with (run.directory / "metrics.csv").open() as file:
         rows = list(csv.DictReader(file))
     with (run.directory / "episodes.csv").open() as file:
@@ -187,3 +188,100 @@ def test_training_logs_updates_and_episodes_and_saves_last_rollout(tmp_path, mon
         mean_return = np.mean([float(episode["return"]) for episode in completed])
         assert f"mean_episode_return={mean_return:.2f}" in output
         assert all(np.isfinite(float(value)) for value in row.values())
+    assert float(rows[-1]["elapsed_seconds"]) == snapshot["progress"]["elapsed_seconds"]
+
+
+def test_resume_continues_optimizer_counters_and_starts_new_episodes(tmp_path, monkeypatch, capsys):
+    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
+    config.environment.num_envs = 2
+    config.environment.max_episode_steps = 4
+    config.model = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
+    config.run.output_dir = str(tmp_path)
+    config.ppo.total_steps = 6
+    config.ppo.rollout_steps = 3
+    config.ppo.minibatch_size = 3
+    config.ppo.update_epochs = 2
+    source = run_training(config).directory / "checkpoint.pt"
+    original = source.read_bytes()
+    saved = torch.load(source, weights_only=True)
+    assert any(saved["normalization"]["discounted_returns"])
+    with (source.parent / "metrics.csv").open() as file:
+        rows = list(csv.DictReader(file))
+    assert rows[0]["completed_episodes"] == "0"
+    assert "mean_episode_return=n/a" in capsys.readouterr().out
+    first_collection = True
+
+    def check_resume(envs, model, normalizer, observations, steps):
+        nonlocal first_collection
+        if first_collection:
+            np.testing.assert_array_equal(normalizer.discounted_returns, [0.0, 0.0])
+            assert np.isclose(
+                normalizer.observation_stats.count,
+                saved["normalization"]["observation_count"] + 2,
+            )
+            for name, value in model.state_dict().items():
+                torch.testing.assert_close(value, saved["model"][name], rtol=0, atol=0)
+            first_collection = False
+        return collect_rollout(envs, model, normalizer, observations, steps)
+
+    monkeypatch.setattr("gravity_adapt.train.collect_rollout", check_resume)
+    config.ppo.total_steps = 14
+    resumed = run_training(config, resume=source)
+    checkpoint = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
+    assert source.read_bytes() == original
+    assert checkpoint["progress"]["env_steps"] == 14
+    assert checkpoint["progress"]["rollouts"] == 3
+    assert checkpoint["progress"]["completed_episodes"] == 2
+    optimizer_steps = {
+        int(state["step"].item()) for state in checkpoint["optimizer"]["state"].values()
+    }
+    assert optimizer_steps == {10}
+    metadata = json.loads((resumed.directory / "metadata.json").read_text())
+    assert metadata["resumed_from"] == str(source)
+    with (resumed.directory / "metrics.csv").open() as file:
+        rows = list(csv.DictReader(file))
+    with (resumed.directory / "episodes.csv").open() as file:
+        episodes = list(csv.DictReader(file))
+    assert [int(row["env_steps"]) for row in rows] == [12, 14]
+    assert [int(row["rollout"]) for row in rows] == [2, 3]
+    assert float(rows[0]["elapsed_seconds"]) > saved["progress"]["elapsed_seconds"]
+    assert [int(episode["length"]) for episode in episodes] == [4, 4]
+    assert [int(episode["env_steps"]) for episode in episodes] == [14, 14]
+    repeated = run_training(config, resume=source)
+    repeat_checkpoint = torch.load(repeated.directory / "checkpoint.pt", weights_only=True)
+    for name, value in checkpoint["model"].items():
+        torch.testing.assert_close(value, repeat_checkpoint["model"][name], rtol=0, atol=0)
+    assert checkpoint["normalization"] == repeat_checkpoint["normalization"]
+    torch.testing.assert_close(checkpoint["rng"]["cpu"], repeat_checkpoint["rng"]["cpu"])
+
+
+def test_interruption_preserves_last_completed_update(tmp_path, monkeypatch):
+    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
+    config.environment.num_envs = 2
+    config.environment.max_episode_steps = 1
+    config.model = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
+    config.run.output_dir = str(tmp_path)
+    config.ppo.total_steps = 6
+    config.ppo.rollout_steps = 2
+    config.ppo.update_epochs = 1
+    calls = 0
+
+    def interrupt_update(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise KeyboardInterrupt
+        return update_ppo(*args)
+
+    monkeypatch.setattr("gravity_adapt.train.update_ppo", interrupt_update)
+    with pytest.raises(KeyboardInterrupt):
+        run_training(config)
+    directory = next(tmp_path.iterdir())
+    checkpoint = torch.load(directory / "checkpoint.pt", weights_only=True)
+    assert checkpoint["progress"]["env_steps"] == 4
+    assert json.loads((directory / "metadata.json").read_text())["status"] == "interrupted"
+    with (directory / "metrics.csv").open() as file:
+        assert len(list(csv.DictReader(file))) == 1
+    resumed = run_training(config, resume=directory / "checkpoint.pt")
+    final = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
+    assert final["progress"]["env_steps"] == 6

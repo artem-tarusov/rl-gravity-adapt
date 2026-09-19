@@ -1,10 +1,13 @@
+import argparse
 from contextlib import closing
+from pathlib import Path
 
 import numpy as np
 import torch
 from gymnasium.vector import SyncVectorEnv
 from torch import Tensor
 
+from gravity_adapt.checkpoints import load_checkpoint, save_checkpoint
 from gravity_adapt.config import Config, parse_config
 from gravity_adapt.envs import make_vector_env
 from gravity_adapt.logging import TrainingLogger
@@ -33,7 +36,6 @@ def collect_rollout(
         "log_probs": torch.empty(shape, device=device),
         "values": torch.empty(shape, device=device),
         "rewards": torch.empty(shape, device=device),
-        "raw_rewards": torch.empty(shape, device=device),
         "terminated": torch.empty(shape, dtype=torch.bool, device=device),
         "truncated": torch.empty(shape, dtype=torch.bool, device=device),
     }
@@ -47,7 +49,6 @@ def collect_rollout(
 
         next_observations, rewards, terminated, truncated, info = envs.step(actions.cpu().numpy())
         done = terminated | truncated
-        rollout["raw_rewards"][step] = torch.as_tensor(rewards, dtype=torch.float32, device=device)
         rollout["rewards"][step] = torch.as_tensor(normalizer.normalize_rewards(rewards, done), device=device)
         rollout["terminated"][step] = torch.as_tensor(terminated, device=device)
         rollout["truncated"][step] = torch.as_tensor(truncated, device=device)
@@ -74,10 +75,10 @@ def collect_rollout(
     return rollout, observations, episodes
 
 
-def run_training(config: Config) -> Run:
+def run_training(config: Config, *, resume: Path | None = None) -> Run:
     if config.ppo.total_steps % config.environment.num_envs:
         raise ValueError("ppo.total_steps must be divisible by environment.num_envs")
-    run = create_run(config)
+    run = create_run(config, resumed_from=resume)
     print(f"Run directory: {run.directory}", flush=True)
     try:
         torch.set_num_threads(config.run.torch_threads)
@@ -102,12 +103,19 @@ def run_training(config: Config) -> Run:
                 "completed_episodes": 0,
                 "elapsed_seconds": 0.0,
             }
-            raw_observations, _ = envs.reset(seed=config.run.seed)
+            if resume is not None:
+                progress = load_checkpoint(resume, model, optimizer, normalizer, config)
+                normalizer.discounted_returns.fill(0.0)
+            initial_steps = progress["env_steps"]
+            elapsed_before = progress["elapsed_seconds"]
+            raw_observations, _ = envs.reset(seed=config.run.seed + initial_steps)
             observations = torch.as_tensor(
                 normalizer.normalize_observations(raw_observations), device=device
             )
             total_vector_steps = config.ppo.total_steps // envs.num_envs
-            for start in range(0, total_vector_steps, config.ppo.rollout_steps):
+            for start in range(
+                initial_steps // envs.num_envs, total_vector_steps, config.ppo.rollout_steps
+            ):
                 steps = min(config.ppo.rollout_steps, total_vector_steps - start)
                 started = run.elapsed_seconds()
                 rollout, observations, episodes = collect_rollout(envs, model, normalizer, observations, steps)
@@ -120,7 +128,7 @@ def run_training(config: Config) -> Run:
                 progress.update(
                     env_steps=env_steps,
                     rollouts=progress["rollouts"] + 1,
-                    elapsed_seconds=run.elapsed_seconds(),
+                    elapsed_seconds=elapsed_before + run.elapsed_seconds(),
                 )
                 logger.log_episodes(
                     episodes,
@@ -133,14 +141,7 @@ def run_training(config: Config) -> Run:
                     rollout_seconds=rollout_seconds,
                     update_seconds=update_seconds,
                 )
-            torch.save(
-                {
-                    "rollout": {name: tensor.cpu() for name, tensor in rollout.items()},
-                    "model": {name: tensor.cpu() for name, tensor in model.state_dict().items()},
-                    "normalization": normalizer.state_dict(),
-                },
-                run.directory / "rollout.pt",
-            )
+                save_checkpoint(run.directory / "checkpoint.pt", model, optimizer, normalizer, config, progress)
         finish_run(
             run,
             status="completed",
@@ -161,7 +162,12 @@ def run_training(config: Config) -> Run:
 
 
 def main() -> None:
-    run_training(parse_config())
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--resume", type=Path, help="Continue training from a checkpoint")
+    known, remaining = parser.parse_known_args()
+    if "--help" in remaining or "-h" in remaining:
+        parser.print_help()
+    run_training(parse_config(remaining), resume=known.resume)
 
 
 if __name__ == "__main__":

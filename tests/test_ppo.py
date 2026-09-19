@@ -94,3 +94,35 @@ def test_ppo_entropy_and_critic_weights_control_updates():
     update_ppo(model, optimizer, rollout, config)
     torch.testing.assert_close(model.actor.log_std, torch.tensor([0.02]))
     torch.testing.assert_close(model.critic.model[-1].bias, torch.tensor([0.05]))
+
+
+def test_ppo_metrics_weight_partial_minibatches_by_sample_count(monkeypatch):
+    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml").ppo
+    config.update_epochs = 2
+    config.minibatch_size = 2
+    model = ActorCritic(1, 1, ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8]))
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+    observations = torch.zeros(1, 3, 1)
+    actions = torch.zeros(1, 3, 1)
+    rollout = {
+        "observations": observations,
+        "next_observations": observations.clone(),
+        "actions": actions,
+        "log_probs": (
+            model.actor(observations).log_prob(actions).detach()
+            - torch.tensor([[1.0, 1.0, 2.0]]).log()
+        ),
+        "values": torch.zeros(1, 3),
+        "rewards": torch.tensor([[0.0, 0.0, 2.0]]),
+        "terminated": torch.ones(1, 3, dtype=torch.bool),
+        "truncated": torch.zeros(1, 3, dtype=torch.bool),
+    }
+    monkeypatch.setattr(torch, "randperm", lambda size, device: torch.arange(size, device=device))
+    metrics = update_ppo(model, torch.optim.SGD(model.parameters(), lr=0.0), rollout, config)
+    assert metrics["policy_loss"] == pytest.approx(-0.8)
+    assert metrics["critic_loss"] == pytest.approx(2 / 3)
+    assert metrics["clip_fraction"] == pytest.approx(1 / 3)
+    assert metrics["approx_kl"] == pytest.approx((1 - math.log(2)) / 3)
+    assert metrics["grad_norm"] == pytest.approx(1 / 3)

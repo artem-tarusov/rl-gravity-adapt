@@ -34,6 +34,7 @@ def update_ppo(
         )
     batch = {name: tensor.flatten(0, 1) for name, tensor in rollout.items()}
     batch_size = len(batch["observations"])
+    totals = {}
     for _ in range(config.update_epochs):
         indices = torch.randperm(batch_size, device=batch["observations"].device)
         for minibatch in indices.split(config.minibatch_size):
@@ -53,13 +54,20 @@ def update_ppo(
             loss = policy_loss + config.critic_loss_weight * critic_loss - config.entropy_coef * entropy
             optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
-    with torch.no_grad():
-        return {
-            "policy_loss": policy_loss.item(),
-            "critic_loss": critic_loss.item(),
-            "entropy": entropy.item(),
-            "approx_kl": ((ratio - 1) - log_ratio).mean().item(),
-            "clip_fraction": ((ratio - 1).abs() > config.clip_coef).float().mean().item(),
-        }
+            with torch.no_grad():
+                metrics = {
+                    "policy_loss": policy_loss,
+                    "critic_loss": critic_loss,
+                    "entropy": entropy,
+                    "approx_kl": ((ratio - 1) - log_ratio).mean(),
+                    "clip_fraction": ((ratio - 1).abs() > config.clip_coef).float().mean(),
+                    "grad_norm": grad_norm,
+                }
+                for name, value in metrics.items():
+                    totals[name] = totals.get(name, 0) + value * len(minibatch)
+    return {
+        name: (value / (batch_size * config.update_epochs)).item()
+        for name, value in totals.items()
+    }

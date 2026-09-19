@@ -9,8 +9,8 @@ fine-tuning, and LoRA adaptation.
 The current implementation provides configuration, Humanoid environments, actor/critic
 networks, run metadata, a smoke check, and PPO training with normalization and GAE.
 The training entry point alternates experience collection and actor/critic updates.
-Training logs, resumable checkpoints, and independent policy evaluation will be
-added in subsequent stages.
+Training writes CSV logs for episodes and PPO updates. Resumable checkpoints and
+independent policy evaluation will be added next.
 
 ## Setup
 
@@ -68,6 +68,7 @@ gravity_adapt/
     __init__.py
     config.py       # YAML configuration, validation, and CLI overrides
     envs.py         # Humanoid creation, gravity, action clipping, vectorization
+    logging.py      # Training CSV logs and console progress
     models.py       # Gaussian actor and separate value network
     normalization.py # Shared observation and discounted-return statistics
     ppo.py          # GAE and PPO minibatch updates
@@ -187,12 +188,29 @@ across rollout boundaries.
 
 Each console progress line includes the mean raw episode return for episodes that
 ended during that rollout, including rewards collected in earlier rollouts. It
-reports `n/a` if no episodes ended. The same line reports policy loss, critic loss,
-and entropy from the
-last minibatch of each PPO update. Final metadata also includes its approximate
-KL divergence and clipping fraction under `result.last_minibatch`. These values
-are computed before that minibatch's optimizer step, rather than averaged over
-the rollout or evaluated after all updates.
+reports `n/a` if no episodes ended. Policy loss, critic loss, and entropy are now
+averaged over all minibatches and epochs in the PPO update, weighted by minibatch
+size. Approximate KL, clipping fraction, and the gradient norm before clipping use
+the same averaging. These are measurements during optimization, not a separate
+evaluation of the final policy. Final metadata stores them under `result.last_update`.
+
+### Training logs
+
+Alongside `config.yaml` and `metadata.json`, each training run writes:
+
+- `metrics.csv`: one row per completed PPO update. Columns include the global
+  rollout and environment-step counters, cumulative completed episodes, elapsed
+  time, collection and update durations, and the six PPO metrics described above.
+  Compute throughput during analysis from the increase in `env_steps` divided by
+  `rollout_seconds + update_seconds`. The constant learning rate is in `config.yaml`.
+- `episodes.csv`: one row per completed episode, with its global episode number,
+  environment-step counter at completion, environment index, raw return, length,
+  and termination/truncation flags. Returns include the full episode even when it
+  spans multiple rollouts; normalization does not change these reported rewards.
+  Compute episode averages from this file during analysis; they are not stored
+  in `metrics.csv`. Mean episode return is still shown in the console.
+
+CSV files are flushed after each update.
 
 Each training run saves its configuration, metadata, and `rollout.pt`. This
 diagnostic snapshot contains the last rollout with its GAE advantages and critic
@@ -201,7 +219,6 @@ state. The rollout's actions, log probabilities, and values were collected befor
 that update, so the saved model generally produces different predictions.
 Read the snapshot with `torch.load(path, weights_only=True)`. It is not a resumable
 training checkpoint; optimizer and random-number generator states are not saved.
-CSV logging and resumable checkpoints are subsequent implementation steps.
 
 PPO settings and normalization conventions use
 [CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)
@@ -223,5 +240,7 @@ unclipped action probabilities, normalization freezing/restoration, and continui
 between rollouts. PPO checks cover hand-calculated GAE targets, clipping gradients,
 entropy and critic loss weights, partial minibatches, optimizer step counts, and
 changes to both actor and critic weights.
+Logging checks cover raw episode statistics, weighted PPO metrics, CSV rows,
+and console episode returns.
 
 Environment behavior follows the [Gymnasium Humanoid documentation](https://gymnasium.farama.org/environments/mujoco/humanoid/).

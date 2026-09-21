@@ -10,7 +10,8 @@ The current implementation provides configuration, Humanoid environments, actor/
 networks, run metadata, a smoke check, and PPO training with normalization and GAE.
 The training entry point alternates experience collection and actor/critic updates.
 Training writes CSV logs and checkpoints that can restore model and optimizer
-state in a new run. Independent policy evaluation will be added next.
+state in a new run. Independent evaluation loads a checkpoint and records raw
+episode results with frozen observation normalization.
 
 ## Setup
 
@@ -69,6 +70,7 @@ gravity_adapt/
     checkpoints.py  # Training state, RNG restoration, and checkpoint replacement
     config.py       # YAML configuration, validation, and CLI overrides
     envs.py         # Humanoid creation, gravity, action clipping, vectorization
+    evaluate.py     # Independent checkpoint evaluation with mean actions
     logging.py      # Training CSV logs and console progress
     models.py       # Gaussian actor and separate value network
     normalization.py # Shared observation and discounted-return statistics
@@ -82,6 +84,7 @@ tests/
     test_checkpoints.py
     test_config.py
     test_envs.py
+    test_evaluate.py
     test_models.py
     test_normalization.py
     test_ppo.py
@@ -257,12 +260,55 @@ Reward accumulators are cleared and reset observations update the existing
 observation statistics. Unfinished episodes from the source run are not logged
 as completed episodes. Resume therefore continues optimization without reproducing
 the exact uninterrupted trajectory; changing devices can also change random
-sequences and numerical results. Evaluation will use frozen observation statistics
-in a subsequent stage.
+sequences and numerical results. Evaluation uses frozen observation statistics.
 
 PPO settings and normalization conventions use
 [CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)
 as a reference. Running statistics use Gymnasium's `RunningMeanStd` implementation.
+
+## Independent evaluation
+
+```bash
+gravity-adapt-evaluate --checkpoint runs/RUN_ID/checkpoint.pt --seed 10000 --episodes 10
+```
+
+Reinstall the editable package to register the command, or use
+`python -m gravity_adapt.evaluate` with the same arguments. No separate configuration
+file is needed: environment and model settings come from the checkpoint.
+Evaluation defaults to CPU and writes under `runs`; override these with `--device`
+and `--output-dir`. Evaluation uses one PyTorch CPU thread.
+
+Python callers can pass `environment=EnvironmentConfig(...)` to `run_evaluation`
+to evaluate the same policy under different gravity or an episode time limit.
+The supplied settings are saved in the evaluation's `config.yaml`; evaluation
+still uses one environment, and the caller's configuration is not modified.
+Without this argument, environment settings come from the checkpoint. Model weights
+and normalization statistics always come from the checkpoint.
+
+Evaluation uses one fresh environment and the Gaussian policy's mean actions
+(`explore=False`), with the usual environment action clipping. Observation statistics
+are loaded and frozen; rewards are not normalized. Model weights remain unchanged,
+and training optimizer and RNG states are not restored.
+
+Choose an evaluation seed separately from the training seed. It is passed only to
+the first reset; later episodes use `reset()` to continue the environment's random
+sequence. Repeating the same evaluation with the same software and device reproduces
+the episode sequence. The seed is saved once in `config.yaml`, not in each CSV row.
+
+Each evaluation creates a separate run directory containing:
+
+- `config.yaml`: checkpoint settings with the actual evaluation seed, device,
+  output directory, and one environment. Retained PPO settings describe training
+  and are not used to update the policy.
+- `metadata.json`: checkpoint path and saved `env_steps`, requested episode count,
+  action-selection mode, runtime information, and completion or interruption status.
+- `episodes.csv`: episode number, raw return, length, termination/truncation flags,
+  and `x_displacement` (final minus initial root-body X position in meters).
+
+CSV rows are flushed after each completed episode; an interrupted episode is not
+recorded as complete. Mean return and length are printed in the console. Compute
+aggregates from the CSV during analysis. The checkpoint is left unchanged.
+Video export and automatic evaluation during training are separate future steps.
 
 ## Development checks
 
@@ -283,5 +329,7 @@ changes to both actor and critic weights.
 Logging and checkpoint checks cover raw episode statistics, weighted PPO metrics,
 restoration of Adam and RNG state, continuation counters, fresh episodes on resume,
 and preservation of the previous checkpoint when writing is interrupted.
+Evaluation checks cover mean actions, frozen weights and normalization, raw results,
+seeded episode sequences, and interruption status.
 
 Environment behavior follows the [Gymnasium Humanoid documentation](https://gymnasium.farama.org/environments/mujoco/humanoid/).

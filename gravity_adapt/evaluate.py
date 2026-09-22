@@ -8,6 +8,7 @@ from typing import Literal
 
 import numpy as np
 import torch
+from gymnasium.wrappers import RecordVideo
 
 from gravity_adapt.config import Config, EnvironmentConfig, ModelConfig, PPOConfig, RunConfig
 from gravity_adapt.envs import make_env
@@ -23,6 +24,7 @@ def run_evaluation(
     seed: int,
     environment: EnvironmentConfig | None = None,
     episodes: int = 10,
+    video: bool = False,
     device: Literal["cpu", "mps", "cuda"] = "cpu",
     output_dir: Path = Path("runs"),
 ) -> Run:
@@ -50,11 +52,18 @@ def run_evaluation(
             "checkpoint_env_steps": saved["progress"]["env_steps"],
             "episodes": episodes,
             "explore": False,
+            "video": video,
         }
         metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
         torch.set_num_threads(config.run.torch_threads)
+        env = make_env(config.environment, render_mode="rgb_array" if video else None)
+        if video:
+            env = RecordVideo(
+                env, video_folder=str(run.directory / "videos"),
+                episode_trigger=lambda _: True, name_prefix="evaluation",
+            )
         with (
-            closing(make_env(config.environment)) as env,
+            closing(env),
             (run.directory / "episodes.csv").open("w", newline="", encoding="utf-8") as file,
         ):
             model = ActorCritic(
@@ -116,12 +125,13 @@ def main() -> None:
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--seed", type=int, required=True, help="Seed for the first environment reset")
     parser.add_argument("--episodes", type=int, default=10)
+    parser.add_argument("--video", action="store_true", help="Save each evaluation episode as MP4")
     parser.add_argument("--device", choices=["cpu", "mps", "cuda"], default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("runs"))
     args = parser.parse_args()
     run_evaluation(
         args.checkpoint, seed=args.seed, episodes=args.episodes,
-        device=args.device, output_dir=args.output_dir,
+        video=args.video, device=args.device, output_dir=args.output_dir,
     )
 
 

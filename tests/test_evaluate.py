@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from gymnasium.envs.mujoco.humanoid_v5 import HumanoidEnv
+from imageio.v2 import get_reader
 
 from gravity_adapt.checkpoints import save_checkpoint
 from gravity_adapt.config import EnvironmentConfig, ModelConfig, load_config
@@ -64,9 +66,9 @@ def test_evaluation_freezes_policy_and_statistics_and_repeats_episode_sequence(
         normalizers.append(self)
         return result
 
-    def record_env(config):
+    def record_env(config, **kwargs):
         assert config.num_envs == 1
-        env = make_env(config)
+        env = make_env(config, **kwargs)
         np.testing.assert_array_equal(env.unwrapped.model.opt.gravity, expected_environment.gravity)
         reset, step = env.reset, env.step
         total, initial_x = 0.0, 0.0
@@ -122,6 +124,7 @@ def test_evaluation_freezes_policy_and_statistics_and_repeats_episode_sequence(
     assert metadata["status"] == "completed"
     assert metadata["evaluation"] == {
         "checkpoint": str(checkpoint), "checkpoint_env_steps": 8, "episodes": 3, "explore": False,
+        "video": False,
     }
     recorded = load_config(first.directory / "config.yaml")
     assert recorded.run.seed == 10000
@@ -140,3 +143,35 @@ def test_interrupted_evaluation_records_status(checkpoint, tmp_path, monkeypatch
         run_evaluation(checkpoint, seed=10000, output_dir=tmp_path)
     metadata_path = next(tmp_path.glob("*/metadata.json"))
     assert json.loads(metadata_path.read_text())["status"] == "interrupted"
+
+
+def test_video_records_each_episode_without_changing_results(checkpoint, tmp_path, monkeypatch):
+    frames = []
+
+    def render(self):
+        assert self.render_mode == "rgb_array"
+        frame = np.full((64, 64, 3), 20 * (len(frames) + 1), dtype=np.uint8)
+        frames.append(frame)
+        return frame
+
+    monkeypatch.setattr(HumanoidEnv, "render", render)
+    plain = run_evaluation(checkpoint, seed=10000, episodes=2, output_dir=tmp_path)
+    recorded = run_evaluation(checkpoint, seed=10000, episodes=2, video=True, output_dir=tmp_path)
+    assert not (plain.directory / "videos").exists()
+    assert (plain.directory / "episodes.csv").read_bytes() == (
+        recorded.directory / "episodes.csv"
+    ).read_bytes()
+    videos = sorted((recorded.directory / "videos").glob("*.mp4"))
+    assert [path.name for path in videos] == [
+        "evaluation-episode-0.mp4", "evaluation-episode-1.mp4",
+    ]
+    assert len(frames) == 6
+    for index, path in enumerate(videos):
+        with get_reader(path) as reader:
+            assert reader.count_frames() == 3
+            assert reader.get_meta_data()["fps"] == 67
+            for frame_index in (0, 2):
+                decoded = reader.get_data(frame_index)
+                np.testing.assert_allclose(decoded, frames[index * 3 + frame_index], atol=3)
+    metadata = json.loads((recorded.directory / "metadata.json").read_text())
+    assert metadata["evaluation"]["video"] is True

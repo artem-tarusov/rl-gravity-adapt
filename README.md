@@ -70,7 +70,7 @@ gravity_adapt/
     checkpoints.py  # Training state, RNG restoration, and checkpoint replacement
     config.py       # YAML configuration, validation, and CLI overrides
     envs.py         # Humanoid creation, gravity, action clipping, vectorization
-    evaluate.py     # Independent checkpoint evaluation with mean actions
+    evaluate.py     # Independent checkpoint evaluation and episode videos
     logging.py      # Training CSV logs and console progress
     models.py       # Gaussian actor and separate value network
     normalization.py # Shared observation and discounted-return statistics
@@ -308,7 +308,29 @@ Each evaluation creates a separate run directory containing:
 CSV rows are flushed after each completed episode; an interrupted episode is not
 recorded as complete. Mean return and length are printed in the console. Compute
 aggregates from the CSV during analysis. The checkpoint is left unchanged.
-Video export and automatic evaluation during training are separate future steps.
+Automatic evaluation during training is a separate future step.
+
+### Episode videos
+
+Add `--video` to save every evaluated episode as an MP4:
+
+```bash
+gravity-adapt-evaluate --checkpoint runs/RUN_ID/checkpoint.pt --seed 10000 --episodes 3 --video
+```
+
+Python callers can pass `video=True` to `run_evaluation`. Gymnasium's `RecordVideo`
+captures the initial state and each subsequent step, including the final state.
+It uses the environment's frame rate (67 FPS for the current Humanoid settings).
+Videos are written under the evaluation run's `videos/` directory; Gymnasium names
+episodes starting at zero, so `evaluation-episode-0.mp4` corresponds to episode 1
+in `episodes.csv`. All requested episodes are recorded, including falls.
+
+Recording uses the same actions and seeded episode sequence as evaluation without
+video. It adds rendering and encoding time. On interruption, a partial video may
+be saved; only completed episodes appear in the CSV. Rendering requires a graphics
+context, including access to macOS graphics services when running in a sandbox.
+MoviePy and its FFmpeg dependency handle MP4 encoding. Videos stay under `runs/`
+and are ignored by Git.
 
 ## Development checks
 
@@ -330,6 +352,8 @@ Logging and checkpoint checks cover raw episode statistics, weighted PPO metrics
 restoration of Adam and RNG state, continuation counters, fresh episodes on resume,
 and preservation of the previous checkpoint when writing is interrupted.
 Evaluation checks cover mean actions, frozen weights and normalization, raw results,
-seeded episode sequences, and interruption status.
+seeded episode sequences, interruption status, and MP4 recording without changes
+to episode results. The recording test uses synthetic frames to avoid requiring
+a graphics context in the test suite.
 
 Environment behavior follows the [Gymnasium Humanoid documentation](https://gymnasium.farama.org/environments/mujoco/humanoid/).

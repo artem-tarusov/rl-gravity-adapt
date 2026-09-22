@@ -11,6 +11,7 @@ requires-python = ">=3.13"
 dependencies = [
     "gymnasium[mujoco]>=1.2,<2",
     "mujoco>=3.3,<4",
+    "moviepy>=2.2,<3",
     "torch>=2.7,<3",
     "numpy>=2.2,<3",
     "PyYAML>=6,<7",

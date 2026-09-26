@@ -116,6 +116,9 @@ def run_training(config: Config, *, resume: Path | None = None) -> Run:
             for start in range(
                 initial_steps // envs.num_envs, total_vector_steps, config.ppo.rollout_steps
             ):
+                learning_rate = config.ppo.learning_rate * (1 - start / total_vector_steps)
+                for group in optimizer.param_groups:
+                    group["lr"] = learning_rate
                 steps = min(config.ppo.rollout_steps, total_vector_steps - start)
                 started = run.elapsed_seconds()
                 rollout, observations, episodes = collect_rollout(envs, model, normalizer, observations, steps)

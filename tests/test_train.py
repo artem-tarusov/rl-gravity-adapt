@@ -109,8 +109,10 @@ def test_training_logs_updates_and_episodes_and_saves_checkpoint(tmp_path, monke
     config.ppo.minibatch_size = 3
     config.ppo.update_epochs = 2
     updates = []
+    learning_rates = []
 
     def record_update(model, optimizer, rollout, ppo_config):
+        learning_rates.append(optimizer.param_groups[0]["lr"])
         before = {name: value.clone() for name, value in model.state_dict().items()}
         metrics = update_ppo(model, optimizer, rollout, ppo_config)
         grad_norm = torch.cat([parameter.grad.flatten() for parameter in model.parameters()]).norm()
@@ -137,7 +139,9 @@ def test_training_logs_updates_and_episodes_and_saves_checkpoint(tmp_path, monke
         "completed_episodes": 10,
     }
     assert [steps for _, steps, _ in updates] == [{4}, {8}]
+    assert learning_rates == pytest.approx([config.ppo.learning_rate, config.ppo.learning_rate * 0.4,])
     snapshot = torch.load(run.directory / "checkpoint.pt", weights_only=True)
+    assert snapshot["optimizer"]["param_groups"][0]["lr"] == learning_rates[-1]
     rollout = updates[-1][2]
     assert rollout["observations"].shape == (2, 2, 348)
     assert rollout["actions"].shape == (2, 2, 17)
@@ -236,6 +240,9 @@ def test_resume_continues_optimizer_counters_and_starts_new_episodes(tmp_path, m
         int(state["step"].item()) for state in checkpoint["optimizer"]["state"].values()
     }
     assert optimizer_steps == {10}
+    assert checkpoint["optimizer"]["param_groups"][0]["lr"] == pytest.approx(
+        config.ppo.learning_rate / 7
+    )
     metadata = json.loads((resumed.directory / "metadata.json").read_text())
     assert metadata["resumed_from"] == str(source)
     with (resumed.directory / "metrics.csv").open() as file:
@@ -285,3 +292,6 @@ def test_interruption_preserves_last_completed_update(tmp_path, monkeypatch):
     resumed = run_training(config, resume=directory / "checkpoint.pt")
     final = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
     assert final["progress"]["env_steps"] == 6
+    assert final["optimizer"]["param_groups"][0]["lr"] == pytest.approx(
+        config.ppo.learning_rate / 3
+    )

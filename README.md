@@ -151,8 +151,10 @@ fixed throughout these passes.
 
 The objective combines the clipped policy loss, `critic_loss_weight` times half
 the mean squared critic error, and the negative entropy bonus weighted by
-`entropy_coef`. The critic loss is not clipped. Adam uses the configured constant
-`learning_rate` and `eps=1e-5`; the combined gradient norm is limited by
+`entropy_coef`. The critic loss is not clipped. Adam uses `eps=1e-5` and a learning
+rate that decreases linearly from `ppo.learning_rate` toward zero. Before each
+rollout, it is set to `ppo.learning_rate * (1 - completed_steps / ppo.total_steps)`.
+The last update still uses a positive rate. The combined gradient norm is limited by
 `max_grad_norm` before each optimizer step. The default configuration performs
 32 minibatch updates per epoch, 10 epochs per rollout, and two rollouts: 640
 optimizer steps in total. This is a short implementation check, not a full
@@ -192,7 +194,7 @@ Alongside `config.yaml` and `metadata.json`, each training run writes:
   time, collection and update durations, and the six PPO metrics described above.
   Compute throughput during analysis from the increase in `env_steps` divided by
   `rollout_seconds + update_seconds`, using the saved checkpoint counter as the
-  starting value for resumed runs. The constant learning rate is in `config.yaml`.
+  starting value for resumed runs. The initial learning rate is in `config.yaml`.
 - `episodes.csv`: one row per completed episode, with its global episode number,
   environment-step counter at completion, environment index, raw return, length,
   and termination/truncation flags. Returns include the full episode even when it
@@ -202,7 +204,7 @@ Alongside `config.yaml` and `metadata.json`, each training run writes:
 - `checkpoint.pt`: the latest model and Adam states, normalization statistics and
   accumulators, configuration, training counters, cumulative elapsed time, and
   PyTorch CPU and active-device RNG states. Adam's state includes its step counts,
-  moments, and constant learning rate; there is no learning-rate scheduler yet.
+  moments, and the learning rate used for the latest update.
 
 CSV files are flushed after each update. The checkpoint is then written to a
 temporary file and replaces the previous checkpoint only after serialization
@@ -226,6 +228,8 @@ Replace `RUN_ID` with the source run directory name. `--resume` is a training CL
 argument, not a YAML field. Python callers can use `run_training(config, resume=path)`.
 `ppo.total_steps` remains the total budget including already completed transitions:
 resuming at 16,384 with a target of 32,768 collects another 16,384 transitions.
+The learning rate is recalculated from the saved transition count and the requested
+total budget. Increasing the budget can therefore increase the learning rate on resume.
 The target must exceed the saved counter. Environment, model, PPO settings other
 than the total budget, and seed must match the checkpoint. Run name, output
 directory, device, and thread count may change.

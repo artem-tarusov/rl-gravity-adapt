@@ -13,6 +13,9 @@ Training writes CSV logs and checkpoints that can restore model and optimizer
 state in a new run. Independent evaluation loads a checkpoint and records raw
 episode results with frozen observation normalization.
 
+The fixed Earth baseline configuration, checkpoints, and verification results are
+recorded in the [Earth baseline report](results/earth_baseline/report.md).
+
 ## Setup
 
 The dependency snapshot was verified on Python 3.13.15 and macOS arm64 (Apple Silicon).
@@ -134,8 +137,8 @@ Reinstall the editable package after pulling changes that add console commands.
 
 `ppo.total_steps` counts transitions across all environments and must be divisible
 by `environment.num_envs`. `ppo.rollout_steps` counts steps per environment in each
-rollout. The supplied configuration collects two rollouts of 2,048 vector steps,
-for 16,384 transitions in total. A smaller final rollout uses the remaining budget.
+rollout. The baseline configuration collects 8,192 transitions per full rollout,
+for 5,000,000 transitions in total. A smaller final rollout uses the remaining budget.
 After each rollout, GAE estimates advantages and critic targets from normalized
 rewards. Terminations have no value bootstrap. Time-limit truncations bootstrap
 from the episode's final observation; both boundaries stop the GAE recursion.
@@ -156,9 +159,7 @@ rate that decreases linearly from `ppo.learning_rate` toward zero. Before each
 rollout, it is set to `ppo.learning_rate * (1 - completed_steps / ppo.total_steps)`.
 The last update still uses a positive rate. The combined gradient norm is limited by
 `max_grad_norm` before each optimizer step. The default configuration performs
-32 minibatch updates per epoch, 10 epochs per rollout, and two rollouts: 640
-optimizer steps in total. This is a short implementation check, not a full
-Humanoid training budget.
+32 minibatch updates per epoch and 10 epochs per full rollout.
 
 Observations are centered and scaled using statistics shared across the vector
 environments. Rewards are divided by the running standard deviation of discounted
@@ -335,9 +336,10 @@ The notebook supports a working directory of either the project root or `noteboo
 It calls `run_training` and `run_evaluation`, reads saved CSV data, plots learning
 curves, PPO diagnostics, throughput, and evaluation results, and displays recorded video.
 
-The pilot uses two million transitions on CPU. Run the cells in order to start
+The pilot uses five million transitions on CPU. Run the cells in order to start
 new training, evaluate its checkpoint, and analyze the results. `record_video`
 controls video recording. Rerunning the training or evaluation cell creates a new run.
+Restart the kernel after changing the training code so that new imports use it.
 
 Keep notebook outputs cleared before committing. Experiment data and videos remain
 in the ignored `runs/` directory, and `.ipynb_checkpoints/` is ignored too.

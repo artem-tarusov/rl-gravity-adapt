@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "ruff>=0.12,<1"]
+notebook = ["ipykernel>=6,<8", "matplotlib>=3.10,<4", "pandas>=2.2,<4"]
 
 [project.scripts]
 gravity-adapt-smoke = "gravity_adapt.smoke:main"

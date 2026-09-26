@@ -80,6 +80,8 @@ gravity_adapt/
     train.py        # Training entry point and rollout collection
 configs/
     earth.yaml
+notebooks/
+    earth_pilot.ipynb
 tests/
     test_checkpoints.py
     test_config.py
@@ -331,6 +333,28 @@ be saved; only completed episodes appear in the CSV. Rendering requires a graphi
 context, including access to macOS graphics services when running in a sandbox.
 MoviePy and its FFmpeg dependency handle MP4 encoding. Videos stay under `runs/`
 and are ignored by Git.
+
+## Pilot notebook
+
+Open `notebooks/earth_pilot.ipynb` in a notebook-capable editor. Install the notebook
+dependencies and register the project's Python kernel:
+
+```bash
+python -m pip install --no-build-isolation -e ".[notebook]"
+python -m ipykernel install --prefix .venv --name gravity-adapt --display-name "Python (gravity-adapt)"
+```
+
+Select the `Python (gravity-adapt)` kernel or the project's `.venv/bin/python`.
+The notebook supports a working directory of either the project root or `notebooks/`.
+It calls `run_training` and `run_evaluation`, reads saved CSV data, plots learning
+curves, PPO diagnostics, throughput, and evaluation results, and displays recorded video.
+
+The pilot uses two million transitions on CPU. Run the cells in order to start
+new training, evaluate its checkpoint, and analyze the results. `record_video`
+controls video recording. Rerunning the training or evaluation cell creates a new run.
+
+Keep notebook outputs cleared before committing. Experiment data and videos remain
+in the ignored `runs/` directory, and `.ipynb_checkpoints/` is ignored too.
 
 ## Development checks
 

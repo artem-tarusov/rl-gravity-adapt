@@ -7,7 +7,7 @@ The planned study compares training from scratch, full
 fine-tuning, and LoRA adaptation.
 
 The current implementation provides configuration, Humanoid environments, actor/critic
-networks, run metadata, a smoke check, and PPO training with normalization and GAE.
+networks, run metadata, and PPO training with normalization and GAE.
 The training entry point alternates experience collection and actor/critic updates.
 Training writes CSV logs and checkpoints that can restore model and optimizer
 state in a new run. Independent evaluation loads a checkpoint and records raw
@@ -41,7 +41,7 @@ uses the build backend already pinned in the dependency snapshot.
 
 ### macOS editable-install troubleshooting
 
-If installation succeeds but imports or `gravity-adapt-smoke` fail with
+If installation succeeds but imports or `gravity-adapt-train` fail with
 `ModuleNotFoundError`, check whether macOS marked the generated `.pth` file as hidden.
 This occurred in the current workspace: Python skipped that file on startup.
 The following command clears the hidden flag on this project's installation hook:
@@ -76,7 +76,6 @@ gravity_adapt/
     normalization.py # Shared observation and discounted-return statistics
     ppo.py          # GAE and PPO minibatch updates
     runs.py         # Run directories, metadata, and lifecycle
-    smoke.py        # Short rollout with an untrained policy
     train.py        # Training entry point and rollout collection
 configs/
     earth.yaml
@@ -90,37 +89,22 @@ tests/
     test_models.py
     test_normalization.py
     test_ppo.py
-    test_smoke.py
     test_train.py
 runs/               # Generated locally; ignored by Git
 ```
 
-## Smoke check
+## Configuration and runs
 
-```bash
-python -m gravity_adapt.smoke --config configs/earth.yaml
-```
-
-The equivalent console command supports the same configuration and overrides:
-
-```bash
-gravity-adapt-smoke --config configs/earth.yaml --run.seed 43
-gravity-adapt-smoke --config configs/earth.yaml --help
-```
-
-The `--config` argument is required. The YAML file must provide all sections and
+Training requires `--config`. The YAML file must provide all sections and
 fields; configuration classes define their types without fallback values.
 Command-line overrides take precedence over the YAML values.
 
 The supplied `configs/earth.yaml` uses Earth gravity, four synchronous environments,
-separate `256 x 256` actor/critic networks with `Tanh`, and CPU inference.
+separate `256 x 256` actor/critic networks with `Tanh`, and CPU training.
 `Tanh` is fixed in the model implementation.
-The smoke command runs 128 vector steps: with four environments, this produces
-512 environment transitions. Python callers can change the count with
-`run_smoke(config, steps=...)`. Environments reset on the same step as an episode
+Environments reset on the same step as an episode
 boundary; the final observation remains available in `info["final_obs"]`.
 Actions are sampled from a Gaussian and clipped by the environment wrapper.
-Reported rewards are raw simulator rewards.
 
 Use `--run.device mps` when Metal is available to the process, or `cuda` on a
 compatible server. The supplied configuration uses CPU; choose a training device after a
@@ -130,13 +114,11 @@ Each invocation creates a unique directory under `runs/` with:
 
 - `config.yaml`: the complete YAML configuration after CLI overrides.
 - `metadata.json`: Python and core package versions, platform, timestamps, status,
-  and rollout diagnostics, including completed-episode returns. The seed and device
+  and run results. The seed and device
   are recorded in `config.yaml`.
 
-The smoke command checks finite policy outputs and simulator observations/rewards.
-It records handled failures or interruptions in the run metadata. A process killed
-without cleanup may leave its status as `running`. A successful smoke check verifies
-integration; the policy has not been trained to walk.
+Handled failures or interruptions are recorded in the run metadata. A process
+killed without cleanup may leave its status as `running`.
 
 ## PPO training
 
@@ -145,9 +127,9 @@ python -m gravity_adapt.train --config configs/earth.yaml
 gravity-adapt-train --config configs/earth.yaml --ppo.total-steps 1024 --ppo.rollout-steps 128
 ```
 
-Smoke and training use the same `Config` and `earth.yaml`, including the required `ppo`
-section. The smoke check does not use PPO settings. Both commands accept YAML/CLI
-overrides; use `--config configs/earth.yaml --help` to list available options.
+Use a short training run, such as the 1,024-transition command above, to check
+integration. Training accepts YAML/CLI overrides; use `--config configs/earth.yaml --help`
+to list available options.
 Reinstall the editable package after pulling changes that add console commands.
 
 `ppo.total_steps` counts transitions across all environments and must be divisible

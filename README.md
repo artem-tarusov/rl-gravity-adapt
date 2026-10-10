@@ -211,8 +211,38 @@ CSV files are flushed after each update. The checkpoint is then written to a
 temporary file and replaces the previous checkpoint only after serialization
 succeeds. An interruption leaves the previous completed checkpoint available;
 the first checkpoint appears after the first completed update. There is one latest
-checkpoint per run, and the old diagnostic `rollout.pt` is no longer written.
+checkpoint at the run root; periodic copies are also retained as described below.
 Read checkpoints with `torch.load(path, map_location="cpu", weights_only=True)`.
+
+### Intermediate checkpoints
+
+Training retains a checkpoint every 1,000,000 transitions, after the rollout that
+crosses the interval boundary. Files are saved as `checkpoints/ENV_STEPS.pt` inside
+the training run, using the actual transition count. Rollouts are not shortened;
+if one rollout crosses several boundaries, it produces one retained checkpoint.
+The root `checkpoint.pt` continues to update after every rollout and contains the
+final state when training finishes.
+
+```bash
+python -m gravity_adapt.train --config configs/earth.yaml --checkpoint-interval 1000000
+```
+
+Python callers can pass `checkpoint_interval` to `run_training`. This option is a
+training argument, not a YAML field. Set it to `0` to keep only the root checkpoint.
+Resume retains new checkpoints using the cumulative transition count; existing
+files in the source run remain unchanged.
+
+Training does not run evaluation. Evaluate any saved checkpoint separately:
+
+```bash
+python -m gravity_adapt.evaluate \
+    --checkpoint runs/RUN_ID/checkpoints/1007616.pt --seed 10000 --episodes 100
+```
+
+Replace the example path with a retained checkpoint. The pilot notebook's
+independent evaluation cell uses the `checkpoint` variable; set it to a saved
+intermediate checkpoint to evaluate that version. If evaluations are used to
+select a checkpoint, use a different evaluation seed for the final comparison.
 
 ### Resume training
 
@@ -297,7 +327,6 @@ Each evaluation creates a separate run directory containing:
 CSV rows are flushed after each completed episode; an interrupted episode is not
 recorded as complete. Mean return and length are printed in the console. Compute
 aggregates from the CSV during analysis. The checkpoint is left unchanged.
-Automatic evaluation during training is a separate future step.
 
 ### Episode videos
 

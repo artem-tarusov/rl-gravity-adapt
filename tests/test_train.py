@@ -295,3 +295,44 @@ def test_interruption_preserves_last_completed_update(tmp_path, monkeypatch):
     assert final["optimizer"]["param_groups"][0]["lr"] == pytest.approx(
         config.ppo.learning_rate / 3
     )
+
+
+def test_periodic_checkpoints_preserve_history_and_handle_resume(tmp_path):
+    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
+    config.environment.num_envs = 2
+    config.environment.max_episode_steps = 2
+    config.model = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
+    config.run.output_dir = str(tmp_path)
+    config.ppo.total_steps = 14
+    config.ppo.rollout_steps = 3
+    config.ppo.minibatch_size = 3
+    config.ppo.update_epochs = 2
+    run = run_training(config, checkpoint_interval=5)
+    history = run.directory / "checkpoints"
+    assert sorted(int(p.stem) for p in history.iterdir()) == [6, 12]
+    assert not (run.directory / "evaluations").exists()
+    metadata = json.loads((run.directory / "metadata.json").read_text())
+    assert "evaluation" not in metadata
+    for steps in (6, 12):
+        saved = torch.load(history / f"{steps}.pt", weights_only=True)
+        assert saved["progress"]["env_steps"] == steps
+    latest = torch.load(run.directory / "checkpoint.pt", weights_only=True)
+    assert latest["progress"]["env_steps"] == 14
+    earlier = torch.load(history / "6.pt", weights_only=True)
+    assert any(
+        not torch.equal(value, latest["model"][name])
+        for name, value in earlier["model"].items()
+    )
+    source = history / "12.pt"
+    original = source.read_bytes()
+    config.ppo.total_steps = 20
+    resumed = run_training(config, resume=source, checkpoint_interval=5)
+    assert sorted(int(p.stem) for p in (resumed.directory / "checkpoints").iterdir()) == [18, 20]
+    assert source.read_bytes() == original
+    assert (resumed.directory / "checkpoints" / "20.pt").read_bytes() == (
+        resumed.directory / "checkpoint.pt"
+    ).read_bytes()
+    disabled = run_training(config, resume=source, checkpoint_interval=0)
+    assert not (disabled.directory / "checkpoints").exists()
+    final = torch.load(disabled.directory / "checkpoint.pt", weights_only=True)
+    assert final["progress"]["env_steps"] == 20

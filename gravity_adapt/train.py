@@ -1,4 +1,5 @@
 import argparse
+import shutil
 from contextlib import closing
 from pathlib import Path
 
@@ -75,7 +76,10 @@ def collect_rollout(
     return rollout, observations, episodes
 
 
-def run_training(config: Config, *, resume: Path | None = None) -> Run:
+def run_training(
+    config: Config, *, resume: Path | None = None,
+    checkpoint_interval: int = 1_000_000,
+) -> Run:
     if config.ppo.total_steps % config.environment.num_envs:
         raise ValueError("ppo.total_steps must be divisible by environment.num_envs")
     run = create_run(config, resumed_from=resume)
@@ -145,6 +149,13 @@ def run_training(config: Config, *, resume: Path | None = None) -> Run:
                     update_seconds=update_seconds,
                 )
                 save_checkpoint(run.directory / "checkpoint.pt", model, optimizer, normalizer, config, progress)
+                previous_steps = start * envs.num_envs
+                if checkpoint_interval > 0 and (
+                    env_steps // checkpoint_interval > previous_steps // checkpoint_interval
+                ):
+                    directory = run.directory / "checkpoints"
+                    directory.mkdir(exist_ok=True)
+                    shutil.copyfile(run.directory / "checkpoint.pt", directory / f"{env_steps}.pt")
         finish_run(
             run,
             status="completed",
@@ -167,10 +178,17 @@ def run_training(config: Config, *, resume: Path | None = None) -> Run:
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--resume", type=Path, help="Continue training from a checkpoint")
+    parser.add_argument(
+        "--checkpoint-interval", type=int, default=1_000_000,
+        help="Transitions between retained checkpoints; 0 keeps only the latest checkpoint",
+    )
     known, remaining = parser.parse_known_args()
     if "--help" in remaining or "-h" in remaining:
         parser.print_help()
-    run_training(parse_config(remaining), resume=known.resume)
+    run_training(
+        parse_config(remaining), resume=known.resume,
+        checkpoint_interval=known.checkpoint_interval,
+    )
 
 
 if __name__ == "__main__":

@@ -13,8 +13,9 @@ Training writes CSV logs and checkpoints that can restore model and optimizer
 state in a new run. Independent evaluation loads a checkpoint and records raw
 episode results with frozen observation normalization.
 
-The fixed Earth baseline configuration, checkpoints, and verification results are
-recorded in the [Earth baseline report](results/earth_baseline/report.md).
+The fixed `earth_baseline` uses 5,000,000 transitions and five PPO update epochs.
+Verification across ten training seeds is recorded in the
+[Earth baseline report](results/earth_baseline/report.md).
 
 ## Setup
 
@@ -159,7 +160,7 @@ rate that decreases linearly from `ppo.learning_rate` toward zero. Before each
 rollout, it is set to `ppo.learning_rate * (1 - completed_steps / ppo.total_steps)`.
 The last update still uses a positive rate. The combined gradient norm is limited by
 `max_grad_norm` before each optimizer step. The default configuration performs
-32 minibatch updates per epoch and 10 epochs per full rollout.
+32 minibatch updates per epoch and 5 epochs per full rollout.
 
 Observations are centered and scaled using statistics shared across the vector
 environments. Rewards are divided by the running standard deviation of discounted

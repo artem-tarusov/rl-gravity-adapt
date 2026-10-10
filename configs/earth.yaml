@@ -18,7 +18,7 @@ ppo:
   total_steps: 5000000
   rollout_steps: 2048
   minibatch_size: 256
-  update_epochs: 10
+  update_epochs: 5
   learning_rate: 0.0001
   gamma: 0.99
   gae_lambda: 0.95

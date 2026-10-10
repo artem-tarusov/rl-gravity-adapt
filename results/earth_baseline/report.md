@@ -1,51 +1,51 @@
-# Earth baseline verification
+# Earth baseline
 
-Fixed on 2026-09-26 for subsequent gravity-adaptation experiments.
-Use all three training seeds (42, 43, 44) as starting policies for comparisons.
+Ten policies trained from scratch on Earth and evaluated on 2026-10-11.
 
 Configuration: [configs/earth.yaml](../../configs/earth.yaml).
-Training implementation reference: commit `9b08650`.
+The recorded models were trained with implementation commit `e69a71b` and five
+update epochs. Their original `earth_epochs5` run identifiers are preserved in
+the summary CSV file.
 
 ## Protocol
 
-- Environment: Humanoid-v5, Earth gravity, 1,000-step episode limit.
-- Training: 5,000,000 transitions, four synchronous environments, one PyTorch CPU thread.
-- Initial learning rate: 1e-4. Linear decay enabled for training seeds 42, 43, and 44.
-- Seeds 43 and 44 were trained from scratch in separate concurrent processes.
-- All three models were evaluated without exploration on the same 100-episode sequence, seeded once with 20000. Observation normalization was frozen.
-- Each selected checkpoint is the final update at 5,000,000 transitions.
+- Humanoid-v5, gravity `[0, 0, -9.81]` m/s², 1,000-step episode limit.
+- Ten models trained from scratch, seeds 42–51, 5,000,000 transitions each.
+- Four synchronous environments, CPU, one PyTorch thread per model.
+- Separate actor and critic MLPs, two hidden layers of 256 units with Tanh.
+- Rollouts: 2,048 steps per environment (8,192 transitions); minibatches: 256; update epochs: 5.
+- Learning rate: 1e-4, linearly reduced toward zero over the full budget.
+- Gamma: 0.99; GAE lambda: 0.95; PPO clip coefficient: 0.2.
+- Entropy coefficient: 0; critic loss weight: 0.5; maximum gradient norm: 0.5.
+- Every evaluation uses the final checkpoint, without checkpoint selection.
+- This report uses 100 evaluation episodes per model with seed 10000.
+  The seed is set only on the first reset of each sequence.
+- Evaluation uses mean actions and frozen observation normalization. Reported
+  returns use raw rewards. The same sequence is used for all ten models.
+- Reached limit means truncation at 1,000 steps without simultaneous termination.
 
 ## Results
 
-| Training seed | Reached limit | Return mean ± SD | Return median | Mean length | Mean X displacement (m) |
-|---|---:|---:|---:|---:|---:|
-| 42 | 92/100 | 6542.7 ± 555.0 | 6686.6 | 979.9 | 24.77 |
-| 43 | 86/100 | 6242.0 ± 1163.0 | 6634.2 | 939.9 | 24.14 |
-| 44 | 84/100 | 5917.5 ± 1316.2 | 6408.5 | 923.6 | 20.63 |
+| Training seed | Reached limit | Mean return |
+|---|---:|---:|
+| 42 | 99/100 | 6383.7 |
+| 43 | 90/100 | 6352.2 |
+| 44 | 98/100 | 6232.7 |
+| 45 | 99/100 | 6888.2 |
+| 46 | 98/100 | 6398.7 |
+| 47 | 100/100 | 7286.7 |
+| 48 | 95/100 | 7117.8 |
+| 49 | 100/100 | 6408.6 |
+| 50 | 91/100 | 6276.7 |
+| 51 | 100/100 | 6413.0 |
 
-## Findings
-
-- The mean limit-reaching rate across the three seeds was 87.3% (262/300 episodes).
-- Falls remain in 8–16% of episodes. Minimum evaluation lengths were 457, 199, and 122 steps for seeds 42, 43, and 44.
-- This configuration and these checkpoints form the fixed Earth baseline.
-
-## Limits
-
-- There are three independent training runs. Evaluation episodes share a trained policy, and models use the same initial-state sequence.
-- The test covers the standard Earth reset distribution and episode horizon, not perturbations, other gravity regimes, or longer episodes.
-- Runtime comparisons are not controlled because seeds 43 and 44 trained concurrently.
+- 970/1,000 episodes reached the limit (97.0%); mean return 6575.8.
+  Each model has equal weight.
 
 ## Artifacts
 
-[Verification plots](verification.png) · [Full summary](summary.csv)
+[Evaluation summary](summary.csv) · [Evaluation episodes](evaluation_episodes.csv)
 
-Checkpoints include model weights and normalization statistics and are not included
-in the repository.
-
-Training and evaluation run identifiers:
-
-| Training seed | Training run | Evaluation run |
-|---|---|---|
-| 42 | `2026-09-26_10-12-47Z_earth_pilot_s42_9fcf9a8f` | `2026-09-26_10-46-07Z_earth_pilot_evaluation_s20000_5019ca47` |
-| 43 | `2026-09-26_10-46-08Z_earth_pilot_s43_9c0165e5` | `2026-09-26_11-06-57Z_earth_pilot_evaluation_s20000_81f4ba3d` |
-| 44 | `2026-09-26_10-46-09Z_earth_pilot_s44_ca023f26` | `2026-09-26_11-07-26Z_earth_pilot_evaluation_s20000_e46fc7c6` |
+The CSV files contain only the selected five-epoch configuration. The summary file
+identifies the original training and evaluation runs. Checkpoints include model
+weights and normalization statistics and are not included in the repository.

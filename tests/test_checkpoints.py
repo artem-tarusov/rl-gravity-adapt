@@ -10,7 +10,7 @@ from gravity_adapt.models import ActorCritic
 from gravity_adapt.normalization import Normalizer
 
 
-def test_checkpoint_restores_optimizer_normalization_and_rng(tmp_path, monkeypatch):
+def test_checkpoint_resume_and_finetune_restore_selected_state(tmp_path, monkeypatch):
     config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
     config.model = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
     config.environment.num_envs = 2
@@ -44,7 +44,7 @@ def test_checkpoint_restores_optimizer_normalization_and_rng(tmp_path, monkeypat
     restored = ActorCritic(3, 2, config.model)
     restored_optimizer = torch.optim.Adam(restored.parameters(), lr=1.0)
     restored_normalizer = Normalizer(3, 2, gamma=0.5)
-    assert (load_checkpoint(path, restored, restored_optimizer, restored_normalizer, config) == progress)
+    assert load_checkpoint(path, restored, restored_optimizer, restored_normalizer, config, mode="resume") == progress
     assert restored_normalizer.state_dict() == saved_normalization
     assert restored_optimizer.param_groups[0]["lr"] == config.ppo.learning_rate
     step(restored, restored_optimizer)
@@ -59,12 +59,30 @@ def test_checkpoint_restores_optimizer_normalization_and_rng(tmp_path, monkeypat
 
     config.environment.gravity = [0.0, 0.0, -3.71]
     with pytest.raises(ValueError, match="environment"):
-        load_checkpoint(path, restored, restored_optimizer, restored_normalizer, config)
+        load_checkpoint(path, restored, restored_optimizer, restored_normalizer, config, mode="resume")
     config.environment.gravity = [0.0, 0.0, -9.81]
     config.ppo.total_steps = 4
     with pytest.raises(ValueError, match="total_steps"):
-        load_checkpoint(path, restored, restored_optimizer, restored_normalizer, config)
+        load_checkpoint(path, restored, restored_optimizer, restored_normalizer, config, mode="resume")
     original = path.read_bytes()
+
+    config.environment.num_envs = 3
+    config.ppo.gamma = 0.95
+    config.run.seed = 7
+    finetuned = ActorCritic(3, 2, config.model)
+    fresh_optimizer = torch.optim.Adam(finetuned.parameters(), lr=2e-5)
+    fresh_normalizer = Normalizer(3, 3, config.ppo.gamma)
+    rng = torch.get_rng_state()
+    assert load_checkpoint(path, finetuned, fresh_optimizer, fresh_normalizer, config, mode="finetune") is None
+    for name, value in torch.load(path, weights_only=True)["model"].items():
+        torch.testing.assert_close(value, finetuned.state_dict()[name], rtol=0, atol=0)
+    assert fresh_optimizer.state_dict()["state"] == {}
+    assert fresh_optimizer.param_groups[0]["lr"] == 2e-5
+    torch.testing.assert_close(torch.get_rng_state(), rng, rtol=0, atol=0)
+    assert fresh_normalizer.state_dict() == {
+        **saved_normalization, "discounted_returns": [0.0, 0.0, 0.0], "gamma": 0.95,
+    }
+    assert path.read_bytes() == original
 
     def interrupted_save(checkpoint, temporary):
         temporary.write_bytes(b"partial checkpoint")

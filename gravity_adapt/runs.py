@@ -22,7 +22,10 @@ class Run:
         return monotonic() - self._started
 
 
-def create_run(config: Config, *, resumed_from: Path | None = None) -> Run:
+def create_run(
+    config: Config, *, checkpoint: Path | None = None,
+    mode: Literal["resume", "finetune"] | None = None,
+) -> Run:
     started_at = datetime.now(UTC)
     suffix = uuid4().hex[:8]
     run_id = f"{started_at:%Y-%m-%d_%H-%M-%SZ}_{config.run.name}_s{config.run.seed}_{suffix}"
@@ -43,8 +46,9 @@ def create_run(config: Config, *, resumed_from: Path | None = None) -> Run:
         "platform": platform.platform(),
         "packages": {name: version(name) for name in ("gymnasium", "mujoco", "torch", "numpy")},
     }
-    if resumed_from is not None:
-        metadata["resumed_from"] = str(resumed_from.resolve())
+    if checkpoint is not None:
+        key = "resumed_from" if mode == "resume" else "initialized_from"
+        metadata[key] = str(checkpoint.expanduser().resolve())
     (directory / "metadata.json").write_text(
         json.dumps(metadata, indent=2, allow_nan=False), encoding="utf-8"
     )

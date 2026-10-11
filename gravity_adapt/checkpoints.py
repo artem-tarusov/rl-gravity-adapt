@@ -1,6 +1,8 @@
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
+import numpy as np
 import torch
 
 from gravity_adapt.config import Config
@@ -34,14 +36,7 @@ def save_checkpoint(
     temporary.replace(path)
 
 
-def load_checkpoint(
-    path: Path,
-    model: ActorCritic,
-    optimizer: torch.optim.Optimizer,
-    normalizer: Normalizer,
-    config: Config,
-) -> dict:
-    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+def _validate_resume_config(checkpoint: dict, config: Config) -> None:
     current = asdict(config)
     for section in ("environment", "model", "ppo"):
         saved = dict(checkpoint["config"][section])
@@ -57,12 +52,32 @@ def load_checkpoint(
         raise ValueError("Resume requires the original run.seed")
     if config.ppo.total_steps <= checkpoint["progress"]["env_steps"]:
         raise ValueError("ppo.total_steps must exceed the checkpoint's env_steps")
+
+
+def load_checkpoint(
+    path: Path,
+    model: ActorCritic,
+    optimizer: torch.optim.Optimizer,
+    normalizer: Normalizer,
+    config: Config,
+    *,
+    mode: Literal["resume", "finetune"],
+) -> dict | None:
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    if mode == "resume":
+        _validate_resume_config(checkpoint, config)
     model.load_state_dict(checkpoint["model"])
-    optimizer.load_state_dict(checkpoint["optimizer"])
     normalizer.load_state_dict(checkpoint["normalization"])
-    torch.set_rng_state(checkpoint["rng"]["cpu"])
-    if config.run.device == "cuda" and "cuda" in checkpoint["rng"]:
-        torch.cuda.set_rng_state(checkpoint["rng"]["cuda"])
-    elif config.run.device == "mps" and "mps" in checkpoint["rng"]:
-        torch.mps.set_rng_state(checkpoint["rng"]["mps"])
-    return checkpoint["progress"]
+    if mode == "finetune":
+        normalizer.discounted_returns = np.zeros(config.environment.num_envs)
+        normalizer.gamma = config.ppo.gamma
+        return None
+    elif mode == "resume":
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        torch.set_rng_state(checkpoint["rng"]["cpu"])
+        if config.run.device == "cuda" and "cuda" in checkpoint["rng"]:
+            torch.cuda.set_rng_state(checkpoint["rng"]["cuda"])
+        elif config.run.device == "mps" and "mps" in checkpoint["rng"]:
+            torch.mps.set_rng_state(checkpoint["rng"]["mps"])
+        return checkpoint["progress"]
+    return None

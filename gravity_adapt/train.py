@@ -2,6 +2,7 @@ import argparse
 import shutil
 from contextlib import closing
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import torch
@@ -77,12 +78,15 @@ def collect_rollout(
 
 
 def run_training(
-    config: Config, *, resume: Path | None = None,
+    config: Config, *, checkpoint: Path | None = None,
+    mode: Literal["resume", "finetune"] | None = None,
     checkpoint_interval: int = 1_000_000,
 ) -> Run:
+    if (checkpoint is None) != (mode is None):
+        raise ValueError("checkpoint and mode must be provided together")
     if config.ppo.total_steps % config.environment.num_envs:
         raise ValueError("ppo.total_steps must be divisible by environment.num_envs")
-    run = create_run(config, resumed_from=resume)
+    run = create_run(config, checkpoint=checkpoint, mode=mode)
     print(f"Run directory: {run.directory}", flush=True)
     try:
         torch.set_num_threads(config.run.torch_threads)
@@ -107,9 +111,11 @@ def run_training(
                 "completed_episodes": 0,
                 "elapsed_seconds": 0.0,
             }
-            if resume is not None:
-                progress = load_checkpoint(resume, model, optimizer, normalizer, config)
-                normalizer.discounted_returns.fill(0.0)
+            if checkpoint is not None:
+                saved_progress = load_checkpoint(checkpoint.expanduser(), model, optimizer, normalizer, config, mode=mode)
+                if mode == "resume":
+                    progress = saved_progress
+                    normalizer.discounted_returns.fill(0.0)
             initial_steps = progress["env_steps"]
             elapsed_before = progress["elapsed_seconds"]
             raw_observations, _ = envs.reset(seed=config.run.seed + initial_steps)
@@ -177,7 +183,8 @@ def run_training(
 
 def main() -> None:
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-    parser.add_argument("--resume", type=Path, help="Continue training from a checkpoint")
+    parser.add_argument("--checkpoint", type=Path, help="Source checkpoint for resume or finetune")
+    parser.add_argument("--mode", choices=["resume", "finetune"], help="How to use the checkpoint")
     parser.add_argument(
         "--checkpoint-interval", type=int, default=1_000_000,
         help="Transitions between retained checkpoints; 0 keeps only the latest checkpoint",
@@ -186,7 +193,7 @@ def main() -> None:
     if "--help" in remaining or "-h" in remaining:
         parser.print_help()
     run_training(
-        parse_config(remaining), resume=known.resume,
+        parse_config(remaining), checkpoint=known.checkpoint, mode=known.mode,
         checkpoint_interval=known.checkpoint_interval,
     )
 

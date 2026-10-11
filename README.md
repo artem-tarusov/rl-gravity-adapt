@@ -83,6 +83,8 @@ gravity_adapt/
     train.py        # Training entry point and rollout collection
 configs/
     earth.yaml
+    mars.yaml
+    mars_finetune.yaml
 notebooks/
     earth_pilot.ipynb
 tests/
@@ -252,12 +254,14 @@ Use the saved configuration to preserve the settings of the original run:
 ```bash
 python -m gravity_adapt.train \
     --config runs/RUN_ID/config.yaml \
-    --resume runs/RUN_ID/checkpoint.pt \
+    --checkpoint runs/RUN_ID/checkpoint.pt --mode resume \
     --ppo.total-steps 32768
 ```
 
-Replace `RUN_ID` with the source run directory name. `--resume` is a training CLI
-argument, not a YAML field. Python callers can use `run_training(config, resume=path)`.
+Replace `RUN_ID` with the source run directory name. `--checkpoint` and `--mode`
+are training CLI arguments, not YAML fields. Provide both to load a checkpoint;
+omit both to train from scratch. Python callers can use
+`run_training(config, checkpoint=path, mode="resume")`.
 `ppo.total_steps` remains the total budget including already completed transitions:
 resuming at 16,384 with a target of 32,768 collects another 16,384 transitions.
 The learning rate is recalculated from the saved transition count and the requested
@@ -281,6 +285,34 @@ observation statistics. Unfinished episodes from the source run are not logged
 as completed episodes. Resume therefore continues optimization without reproducing
 the exact uninterrupted trajectory; changing devices can also change random
 sequences and numerical results. Evaluation uses frozen observation statistics.
+
+### Fine-tuning
+
+Start a new training run from an existing model with `--mode finetune`:
+
+```bash
+python -m gravity_adapt.train \
+    --config configs/mars_finetune.yaml \
+    --checkpoint runs/EARTH_RUN_ID/checkpoint.pt --mode finetune
+```
+
+Python callers can use `run_training(config, checkpoint=path, mode="finetune")`.
+Fine-tuning loads the actor, including `log_std`, the critic, and observation and
+return normalization statistics. All model parameters remain trainable. Both sets
+of normalization statistics continue updating from their saved counts during training.
+Discounted-return accumulators start at zero for the new environments, using the
+new configuration's `gamma`.
+
+Adam, training counters, elapsed time, and the learning-rate schedule start fresh.
+The new run's seed initializes random state; checkpoint RNG state is not restored.
+`ppo.total_steps` counts only new transitions. The supplied configuration uses
+Mars gravity, 5,000,000 new transitions, five PPO epochs, and learning rate 1e-4
+with linear decay. The model architecture must match the source checkpoint.
+
+Metadata records the source checkpoint as `initialized_from`. Logs and checkpoints
+use the existing format and periodic saving mechanism. To continue interrupted
+fine-tuning, use its saved configuration and checkpoint with `--mode resume`.
+Evaluate saved checkpoints separately with the evaluation entry point.
 
 PPO settings and normalization conventions use
 [CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)

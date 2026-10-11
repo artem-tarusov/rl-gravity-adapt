@@ -230,7 +230,7 @@ def test_resume_continues_optimizer_counters_and_starts_new_episodes(tmp_path, m
 
     monkeypatch.setattr("gravity_adapt.train.collect_rollout", check_resume)
     config.ppo.total_steps = 14
-    resumed = run_training(config, resume=source)
+    resumed = run_training(config, checkpoint=source, mode="resume")
     checkpoint = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
     assert source.read_bytes() == original
     assert checkpoint["progress"]["env_steps"] == 14
@@ -254,12 +254,95 @@ def test_resume_continues_optimizer_counters_and_starts_new_episodes(tmp_path, m
     assert float(rows[0]["elapsed_seconds"]) > saved["progress"]["elapsed_seconds"]
     assert [int(episode["length"]) for episode in episodes] == [4, 4]
     assert [int(episode["env_steps"]) for episode in episodes] == [14, 14]
-    repeated = run_training(config, resume=source)
+    repeated = run_training(config, checkpoint=source, mode="resume")
     repeat_checkpoint = torch.load(repeated.directory / "checkpoint.pt", weights_only=True)
     for name, value in checkpoint["model"].items():
         torch.testing.assert_close(value, repeat_checkpoint["model"][name], rtol=0, atol=0)
     assert checkpoint["normalization"] == repeat_checkpoint["normalization"]
     torch.testing.assert_close(checkpoint["rng"]["cpu"], repeat_checkpoint["rng"]["cpu"])
+
+
+def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeypatch):
+    config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
+    config.environment.num_envs = 2
+    config.environment.max_episode_steps = 4
+    config.model = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
+    config.run.output_dir = str(tmp_path)
+    config.ppo.total_steps = 6
+    config.ppo.rollout_steps = 2
+    config.ppo.minibatch_size = 3
+    config.ppo.update_epochs = 2
+    source = run_training(config).directory / "checkpoint.pt"
+    original = source.read_bytes()
+    saved = torch.load(source, weights_only=True)
+    config.environment.gravity = [0.0, 0.0, -3.71]
+    config.environment.num_envs = 3
+    config.environment.max_episode_steps = 2
+    config.run.seed = 7
+    config.ppo.total_steps = 9
+    config.ppo.learning_rate = 2e-5
+    first_collection = True
+    learning_rates = []
+
+    def check_collection(envs, model, normalizer, observations, steps):
+        nonlocal first_collection
+        if first_collection:
+            for name, value in model.state_dict().items():
+                torch.testing.assert_close(value, saved["model"][name], rtol=0, atol=0)
+            np.testing.assert_array_equal(normalizer.discounted_returns, [0.0, 0.0, 0.0])
+            assert np.isclose(
+                normalizer.observation_stats.count,
+                saved["normalization"]["observation_count"] + 3,
+            )
+            assert normalizer.return_stats.count == saved["normalization"]["return_count"]
+            np.testing.assert_array_equal(envs.envs[0].unwrapped.model.opt.gravity, [0, 0, -3.71])
+            first_collection = False
+        return collect_rollout(envs, model, normalizer, observations, steps)
+
+    def check_update(model, optimizer, rollout, ppo_config):
+        if not learning_rates:
+            assert not optimizer.state
+        learning_rates.append(optimizer.param_groups[0]["lr"])
+        return update_ppo(model, optimizer, rollout, ppo_config)
+
+    monkeypatch.setattr("gravity_adapt.train.collect_rollout", check_collection)
+    monkeypatch.setattr("gravity_adapt.train.update_ppo", check_update)
+    run = run_training(config, checkpoint=source, mode="finetune", checkpoint_interval=6)
+    checkpoint = torch.load(run.directory / "checkpoint.pt", weights_only=True)
+    assert source.read_bytes() == original
+    assert checkpoint["progress"]["env_steps"] == 9
+    assert checkpoint["progress"]["rollouts"] == 2
+    assert checkpoint["progress"]["completed_episodes"] == 3
+    assert checkpoint["config"]["run"]["seed"] == 7
+    assert learning_rates == pytest.approx([2e-5, 2e-5 / 3])
+    assert {int(state["step"].item()) for state in checkpoint["optimizer"]["state"].values()} == {6}
+    for prefix in ("actor.", "critic."):
+        assert any(
+            not torch.equal(value, saved["model"][name])
+            for name, value in checkpoint["model"].items() if name.startswith(prefix)
+        )
+    assert not torch.equal(checkpoint["model"]["actor.log_std"], saved["model"]["actor.log_std"])
+    assert (
+        checkpoint["normalization"]["observation_count"] > saved["normalization"]["observation_count"]
+    )
+    assert checkpoint["normalization"]["return_count"] > saved["normalization"]["return_count"]
+    metadata = json.loads((run.directory / "metadata.json").read_text())
+    assert metadata["initialized_from"] == str(source)
+    assert "resumed_from" not in metadata
+    assert (run.directory / "checkpoints" / "6.pt").is_file()
+    assert not (run.directory / "evaluations").exists()
+    with (run.directory / "metrics.csv").open() as stream:
+        rows = list(csv.DictReader(stream))
+    assert [int(row["env_steps"]) for row in rows] == [6, 9]
+    assert [int(row["completed_episodes"]) for row in rows] == [3, 3]
+
+    monkeypatch.setattr("gravity_adapt.train.collect_rollout", collect_rollout)
+    monkeypatch.setattr("gravity_adapt.train.update_ppo", update_ppo)
+    config.ppo.total_steps = 15
+    resumed = run_training(config, checkpoint=run.directory / "checkpoint.pt", mode="resume")
+    final = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
+    assert final["progress"]["env_steps"] == 15
+    assert {int(state["step"].item()) for state in final["optimizer"]["state"].values()} == {10}
 
 
 def test_interruption_preserves_last_completed_update(tmp_path, monkeypatch):
@@ -289,7 +372,7 @@ def test_interruption_preserves_last_completed_update(tmp_path, monkeypatch):
     assert json.loads((directory / "metadata.json").read_text())["status"] == "interrupted"
     with (directory / "metrics.csv").open() as file:
         assert len(list(csv.DictReader(file))) == 1
-    resumed = run_training(config, resume=directory / "checkpoint.pt")
+    resumed = run_training(config, checkpoint=directory / "checkpoint.pt", mode="resume")
     final = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
     assert final["progress"]["env_steps"] == 6
     assert final["optimizer"]["param_groups"][0]["lr"] == pytest.approx(
@@ -326,13 +409,13 @@ def test_periodic_checkpoints_preserve_history_and_handle_resume(tmp_path):
     source = history / "12.pt"
     original = source.read_bytes()
     config.ppo.total_steps = 20
-    resumed = run_training(config, resume=source, checkpoint_interval=5)
+    resumed = run_training(config, checkpoint=source, mode="resume", checkpoint_interval=5)
     assert sorted(int(p.stem) for p in (resumed.directory / "checkpoints").iterdir()) == [18, 20]
     assert source.read_bytes() == original
     assert (resumed.directory / "checkpoints" / "20.pt").read_bytes() == (
         resumed.directory / "checkpoint.pt"
     ).read_bytes()
-    disabled = run_training(config, resume=source, checkpoint_interval=0)
+    disabled = run_training(config, checkpoint=source, mode="resume", checkpoint_interval=0)
     assert not (disabled.directory / "checkpoints").exists()
     final = torch.load(disabled.directory / "checkpoint.pt", weights_only=True)
     assert final["progress"]["env_steps"] == 20

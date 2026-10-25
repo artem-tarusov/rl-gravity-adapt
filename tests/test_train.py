@@ -263,8 +263,11 @@ def test_resume_continues_optimizer_counters_and_starts_new_episodes(tmp_path, m
     torch.testing.assert_close(checkpoint["rng"]["cpu"], repeat_checkpoint["rng"]["cpu"])
 
 
-@pytest.mark.parametrize("lora_rank", [0, 4])
-def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeypatch, lora_rank):
+@pytest.mark.parametrize("actor_lora_rank", [0, 4])
+@pytest.mark.parametrize("critic_lora_rank", [0, 4])
+def test_finetuning_starts_new_training_on_mars_and_can_resume(
+    tmp_path, monkeypatch, actor_lora_rank, critic_lora_rank
+):
     config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
     config.environment.num_envs = 2
     config.environment.max_episode_steps = 4
@@ -279,7 +282,8 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
     saved = torch.load(source, weights_only=True)
     source_model = ActorCritic(348, 17, config.model)
     source_model.load_state_dict(saved["model"])
-    config.model.lora_rank = lora_rank
+    config.model.actor_lora_rank = actor_lora_rank
+    config.model.critic_lora_rank = critic_lora_rank
     config.environment.gravity = [0.0, 0.0, -3.71]
     config.environment.num_envs = 3
     config.environment.max_episode_steps = 2
@@ -320,10 +324,8 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
             }
             assert trainable == {id(parameter) for parameter in optimizer.param_groups[0]["params"]}
             for name, parameter in model.named_parameters():
-                frozen = (
-                    lora_rank and name.startswith("actor.model.")
-                    and name.endswith((".weight", ".bias"))
-                )
+                rank = actor_lora_rank if name.startswith("actor.") else critic_lora_rank
+                frozen = rank and name.endswith((".weight", ".bias"))
                 assert parameter.requires_grad == (not frozen)
         learning_rates.append(optimizer.param_groups[0]["lr"])
         return update_ppo(model, optimizer, rollout, ppo_config)
@@ -344,9 +346,9 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
             not torch.equal(value, initial_state[name])
             for name, value in checkpoint["model"].items() if name.startswith(prefix)
         )
-    if lora_rank:
+    for prefix, rank in (("actor.model.", actor_lora_rank), ("critic.model.", critic_lora_rank)):
         for name, value in checkpoint["model"].items():
-            if name.startswith("actor.model."):
+            if rank and name.startswith(prefix):
                 if name.endswith((".weight", ".bias")):
                     torch.testing.assert_close(value, initial_state[name], rtol=0, atol=0)
                 else:
@@ -373,14 +375,17 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
     final = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
     assert final["progress"]["env_steps"] == 15
     assert {int(state["step"].item()) for state in final["optimizer"]["state"].values()} == {10}
-    if lora_rank:
+    for prefix, rank in (("actor.model.", actor_lora_rank), ("critic.model.", critic_lora_rank)):
         for name, value in final["model"].items():
-            if name.startswith("actor.model.") and name.endswith((".weight", ".bias")):
+            if rank and name.startswith(prefix) and name.endswith((".weight", ".bias")):
                 torch.testing.assert_close(value, initial_state[name], rtol=0, atol=0)
+    if actor_lora_rank or critic_lora_rank:
         evaluation = run_evaluation(
             resumed.directory / "checkpoint.pt", seed=10000, episodes=1, output_dir=tmp_path,
         )
-        assert load_config(evaluation.directory / "config.yaml").model.lora_rank == lora_rank
+        evaluated_model = load_config(evaluation.directory / "config.yaml").model
+        assert evaluated_model.actor_lora_rank == actor_lora_rank
+        assert evaluated_model.critic_lora_rank == critic_lora_rank
 
 
 def test_interruption_preserves_last_completed_update(tmp_path, monkeypatch):

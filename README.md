@@ -90,6 +90,7 @@ configs/
     mars_lora_actor_rank16.yaml
     mars_lora_actor_rank32.yaml
     mars_lora_actor_rank64.yaml
+    mars_lora_actor_critic_rank64.yaml
 notebooks/
     earth_pilot.ipynb
 tests/
@@ -107,8 +108,10 @@ runs/               # Generated locally; ignored by Git
 ## Configuration and runs
 
 Training requires `--config`. The YAML file must provide all sections and
-required fields. `model.lora_rank` is optional and defaults to `0` (disabled).
+required fields. `model.actor_lora_rank` and `model.critic_lora_rank` default to `0` (disabled).
 Command-line overrides take precedence over the YAML values.
+Use `--model.actor-lora-rank` to override the actor rank. Saved configurations and
+checkpoints using the previous `model.lora_rank` name remain readable.
 
 The supplied `configs/earth.yaml` uses Earth gravity, four synchronous environments,
 separate `256 x 256` actor/critic networks with `Tanh`, and CPU training.
@@ -327,7 +330,7 @@ as a reference. Running statistics use Gymnasium's `RunningMeanStd` implementati
 
 Actor LoRA experiments with a fully trainable critic: [rank 4](results/earth_to_mars_lora_actor_rank4/report.md) · [rank 16](results/earth_to_mars_lora_actor_rank16/report.md) · [rank 32](results/earth_to_mars_lora_actor_rank32/report.md) · [rank 64](results/earth_to_mars_lora_actor_rank64/report.md).
 
-Use the same fine-tuning entry point with `model.lora_rank: 4`:
+Use the same fine-tuning entry point with `model.actor_lora_rank: 4`:
 
 ```bash
 python -m gravity_adapt.train \
@@ -337,13 +340,16 @@ python -m gravity_adapt.train \
 
 [LoRA](https://arxiv.org/abs/2106.09685) adds a trainable low-rank update to each
 actor linear layer, including the output layer. Base weights and biases are
-frozen; `log_std` and the entire critic remain trainable. The update is `B @ A`,
+frozen; `log_std` remains trainable. Set `model.critic_lora_rank` to apply LoRA
+to each critic linear layer as well; its default of `0` keeps the entire critic trainable.
+`configs/mars_lora_actor_critic_rank64.yaml` uses rank 64 for both networks.
+The update is `B @ A`,
 with scaling fixed at 1 (`alpha = rank`). `A` uses Kaiming uniform initialization
-and `B` starts at zero, preserving the source policy before training.
+and `B` starts at zero, preserving the source network outputs before training.
 
 LoRA uses the existing PPO settings and normalization updates.
 Checkpoints store base weights and adapters
-together. Resume and evaluation reconstruct the adapters from the saved rank
+together. Resume and evaluation reconstruct the adapters from the saved ranks
 and use the existing commands.
 
 ## Independent evaluation

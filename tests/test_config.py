@@ -27,3 +27,14 @@ def test_ppo_overrides():
     assert config.ppo.total_steps == 24
     assert config.ppo.gamma == 0.9
     assert config.ppo.rollout_steps == 2048
+
+
+@pytest.mark.parametrize("rank_key", ["actor_lora_rank", "lora_rank"])
+def test_actor_lora_rank_loading_and_cli_override(tmp_path, rank_key):
+    source = Path(__file__).resolve().parents[1] / "configs" / "mars_lora_actor_rank4.yaml"
+    path = tmp_path / "config.yaml"
+    path.write_text(source.read_text().replace("actor_lora_rank", rank_key))
+    assert load_config(path).model.actor_lora_rank == 4
+    config = parse_config(["--config", str(path), "--model.actor-lora-rank", "16"])
+    assert config.model.actor_lora_rank == 16
+    assert config.model.critic_lora_rank == 0

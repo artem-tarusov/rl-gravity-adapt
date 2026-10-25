@@ -10,9 +10,14 @@ from gravity_adapt.models import ActorCritic
 from gravity_adapt.normalization import Normalizer
 
 
-def test_checkpoint_resume_and_finetune_restore_selected_state(tmp_path, monkeypatch):
+@pytest.mark.parametrize("actor_lora_rank", [0, 4])
+def test_checkpoint_resume_and_finetune_restore_selected_state(
+    tmp_path, monkeypatch, actor_lora_rank
+):
     config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
-    config.model = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
+    config.model = ModelConfig(
+        actor_hidden_sizes=[8], critic_hidden_sizes=[8], actor_lora_rank=actor_lora_rank,
+    )
     config.environment.num_envs = 2
     torch.manual_seed(42)
     model = ActorCritic(3, 2, config.model)
@@ -39,7 +44,10 @@ def test_checkpoint_resume_and_finetune_restore_selected_state(tmp_path, monkeyp
     path = tmp_path / "checkpoint.pt"
     save_checkpoint(path, model, optimizer, normalizer, config, progress)
     legacy = torch.load(path, weights_only=True)
-    legacy["config"]["model"].pop("lora_rank")
+    legacy["config"]["model"].pop("actor_lora_rank")
+    if actor_lora_rank:
+        legacy["config"]["model"]["lora_rank"] = actor_lora_rank
+    legacy["config"]["model"].pop("critic_lora_rank")
     torch.save(legacy, path)
     saved_normalization = normalizer.state_dict()
     step(model, optimizer)

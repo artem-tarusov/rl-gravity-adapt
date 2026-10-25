@@ -22,7 +22,15 @@ class EnvironmentConfig:
 class ModelConfig:
     actor_hidden_sizes: list[int]
     critic_hidden_sizes: list[int]
-    lora_rank: int = 0
+    actor_lora_rank: int = 0
+    critic_lora_rank: int = 0
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ModelConfig":
+        data = dict(data)
+        if "lora_rank" in data:
+            data.setdefault("actor_lora_rank", data.pop("lora_rank"))
+        return cls(**data)
 
 
 @dataclass
@@ -64,7 +72,7 @@ def load_config(path: Path) -> Config:
         raise ValueError(f"Unknown configuration sections: {', '.join(sorted(map(str, unknown)))}")
     return Config(
         environment=EnvironmentConfig(**data["environment"]),
-        model=ModelConfig(**data["model"]),
+        model=ModelConfig.from_dict(data["model"]),
         run=RunConfig(**data["run"]),
         ppo=PPOConfig(**data["ppo"]),
     )

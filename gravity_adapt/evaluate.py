@@ -32,7 +32,7 @@ def run_evaluation(
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
     config = Config(
         environment=EnvironmentConfig(**saved["config"]["environment"]),
-        model=ModelConfig(**saved["config"]["model"]),
+        model=ModelConfig.from_dict(saved["config"]["model"]),
         run=RunConfig(**saved["config"]["run"]),
         ppo=PPOConfig(**saved["config"]["ppo"]),
     )

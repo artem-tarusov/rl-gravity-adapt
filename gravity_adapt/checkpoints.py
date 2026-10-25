@@ -42,7 +42,7 @@ def _validate_resume_config(checkpoint: dict, config: Config) -> None:
         saved = dict(checkpoint["config"][section])
         requested = dict(current[section])
         if section == "model":
-            saved = asdict(ModelConfig(**saved))
+            saved = asdict(ModelConfig.from_dict(saved))
         if section == "ppo":
             saved.pop("total_steps")
             requested.pop("total_steps")
@@ -69,13 +69,13 @@ def load_checkpoint(
     if mode == "resume":
         _validate_resume_config(checkpoint, config)
     state = checkpoint["model"]
-    if (
-        mode == "finetune" and config.model.lora_rank
-        and not checkpoint["config"]["model"].get("lora_rank", 0)
-    ):
-        for name, value in model.state_dict().items():
-            if name.endswith((".lora_a", ".lora_b")):
-                state[name] = value
+    if mode == "finetune":
+        saved_model_config = ModelConfig.from_dict(checkpoint["config"]["model"])
+        for network in ("actor", "critic"):
+            if not getattr(saved_model_config, f"{network}_lora_rank"):
+                for name, value in getattr(model, network).state_dict().items():
+                    if name.endswith((".lora_a", ".lora_b")):
+                        state[f"{network}.{name}"] = value
     model.load_state_dict(state)
     normalizer.load_state_dict(checkpoint["normalization"])
     if mode == "finetune":

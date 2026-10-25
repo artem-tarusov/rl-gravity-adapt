@@ -34,10 +34,10 @@ class Actor(nn.Module):
         self.model = _mlp(
             observation_size, config.actor_hidden_sizes, action_size, output_gain=0.01
         )
-        if config.lora_rank:
+        if config.actor_lora_rank:
             for index, layer in enumerate(self.model):
                 if isinstance(layer, nn.Linear):
-                    self.model[index] = LoRALinear(layer, config.lora_rank)
+                    self.model[index] = LoRALinear(layer, config.actor_lora_rank)
         self.log_std = nn.Parameter(torch.zeros(action_size))
 
     def forward(self, observations: Tensor) -> Independent:
@@ -50,6 +50,10 @@ class Critic(nn.Module):
     def __init__(self, observation_size: int, config: ModelConfig):
         super().__init__()
         self.model = _mlp(observation_size, config.critic_hidden_sizes, 1, output_gain=1.0)
+        if config.critic_lora_rank:
+            for index, layer in enumerate(self.model):
+                if isinstance(layer, nn.Linear):
+                    self.model[index] = LoRALinear(layer, config.critic_lora_rank)
 
     def forward(self, observations: Tensor) -> Tensor:
         return self.model(observations).squeeze(-1)

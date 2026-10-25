@@ -6,7 +6,7 @@ environment:
 model:
   actor_hidden_sizes: [256, 256]
   critic_hidden_sizes: [256, 256]
-  lora_rank: 32
+  actor_lora_rank: 32
 
 run:
   name: mars_lora_rank32

@@ -104,7 +104,10 @@ def run_training(
                 envs.single_action_space.shape[0],
                 config.model,
             ).to(device)
-            optimizer = torch.optim.Adam(model.parameters(), lr=config.ppo.learning_rate, eps=1e-5)
+            optimizer = torch.optim.Adam(
+                (parameter for parameter in model.parameters() if parameter.requires_grad),
+                lr=config.ppo.learning_rate, eps=1e-5,
+            )
             progress = {
                 "env_steps": 0,
                 "rollouts": 0,

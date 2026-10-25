@@ -5,7 +5,7 @@ from typing import Literal
 import numpy as np
 import torch
 
-from gravity_adapt.config import Config
+from gravity_adapt.config import Config, ModelConfig
 from gravity_adapt.models import ActorCritic
 from gravity_adapt.normalization import Normalizer
 
@@ -41,6 +41,8 @@ def _validate_resume_config(checkpoint: dict, config: Config) -> None:
     for section in ("environment", "model", "ppo"):
         saved = dict(checkpoint["config"][section])
         requested = dict(current[section])
+        if section == "model":
+            saved = asdict(ModelConfig(**saved))
         if section == "ppo":
             saved.pop("total_steps")
             requested.pop("total_steps")
@@ -66,7 +68,15 @@ def load_checkpoint(
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     if mode == "resume":
         _validate_resume_config(checkpoint, config)
-    model.load_state_dict(checkpoint["model"])
+    state = checkpoint["model"]
+    if (
+        mode == "finetune" and config.model.lora_rank
+        and not checkpoint["config"]["model"].get("lora_rank", 0)
+    ):
+        for name, value in model.state_dict().items():
+            if name.endswith((".lora_a", ".lora_b")):
+                state[name] = value
+    model.load_state_dict(state)
     normalizer.load_state_dict(checkpoint["normalization"])
     if mode == "finetune":
         normalizer.discounted_returns = np.zeros(config.environment.num_envs)

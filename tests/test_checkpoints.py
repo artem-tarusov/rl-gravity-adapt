@@ -38,6 +38,9 @@ def test_checkpoint_resume_and_finetune_restore_selected_state(tmp_path, monkeyp
     }
     path = tmp_path / "checkpoint.pt"
     save_checkpoint(path, model, optimizer, normalizer, config, progress)
+    legacy = torch.load(path, weights_only=True)
+    legacy["config"]["model"].pop("lora_rank")
+    torch.save(legacy, path)
     saved_normalization = normalizer.state_dict()
     step(model, optimizer)
     expected_random = torch.rand(3)

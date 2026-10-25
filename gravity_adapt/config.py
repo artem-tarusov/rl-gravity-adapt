@@ -22,6 +22,7 @@ class EnvironmentConfig:
 class ModelConfig:
     actor_hidden_sizes: list[int]
     critic_hidden_sizes: list[int]
+    lora_rank: int = 0
 
 
 @dataclass

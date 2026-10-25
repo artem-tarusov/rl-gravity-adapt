@@ -10,6 +10,7 @@ import torch
 from gymnasium.vector import AutoresetMode, SyncVectorEnv
 
 from gravity_adapt.config import ModelConfig, load_config
+from gravity_adapt.evaluate import run_evaluation
 from gravity_adapt.models import ActorCritic
 from gravity_adapt.normalization import Normalizer
 from gravity_adapt.ppo import update_ppo
@@ -262,7 +263,8 @@ def test_resume_continues_optimizer_counters_and_starts_new_episodes(tmp_path, m
     torch.testing.assert_close(checkpoint["rng"]["cpu"], repeat_checkpoint["rng"]["cpu"])
 
 
-def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeypatch):
+@pytest.mark.parametrize("lora_rank", [0, 4])
+def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeypatch, lora_rank):
     config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
     config.environment.num_envs = 2
     config.environment.max_episode_steps = 4
@@ -275,6 +277,9 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
     source = run_training(config).directory / "checkpoint.pt"
     original = source.read_bytes()
     saved = torch.load(source, weights_only=True)
+    source_model = ActorCritic(348, 17, config.model)
+    source_model.load_state_dict(saved["model"])
+    config.model.lora_rank = lora_rank
     config.environment.gravity = [0.0, 0.0, -3.71]
     config.environment.num_envs = 3
     config.environment.max_episode_steps = 2
@@ -283,12 +288,20 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
     config.ppo.learning_rate = 2e-5
     first_collection = True
     learning_rates = []
+    initial_state = {}
 
     def check_collection(envs, model, normalizer, observations, steps):
         nonlocal first_collection
         if first_collection:
-            for name, value in model.state_dict().items():
-                torch.testing.assert_close(value, saved["model"][name], rtol=0, atol=0)
+            initial_state.update(
+                {name: value.clone() for name, value in model.state_dict().items()}
+            )
+            for name, value in saved["model"].items():
+                torch.testing.assert_close(initial_state[name], value, rtol=0, atol=0)
+            torch.testing.assert_close(
+                model.get_action_and_value(observations, explore=False),
+                source_model.get_action_and_value(observations, explore=False), rtol=0, atol=0,
+            )
             np.testing.assert_array_equal(normalizer.discounted_returns, [0.0, 0.0, 0.0])
             assert np.isclose(
                 normalizer.observation_stats.count,
@@ -302,6 +315,16 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
     def check_update(model, optimizer, rollout, ppo_config):
         if not learning_rates:
             assert not optimizer.state
+            trainable = {
+                id(parameter) for parameter in model.parameters() if parameter.requires_grad
+            }
+            assert trainable == {id(parameter) for parameter in optimizer.param_groups[0]["params"]}
+            for name, parameter in model.named_parameters():
+                frozen = (
+                    lora_rank and name.startswith("actor.model.")
+                    and name.endswith((".weight", ".bias"))
+                )
+                assert parameter.requires_grad == (not frozen)
         learning_rates.append(optimizer.param_groups[0]["lr"])
         return update_ppo(model, optimizer, rollout, ppo_config)
 
@@ -318,9 +341,16 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
     assert {int(state["step"].item()) for state in checkpoint["optimizer"]["state"].values()} == {6}
     for prefix in ("actor.", "critic."):
         assert any(
-            not torch.equal(value, saved["model"][name])
+            not torch.equal(value, initial_state[name])
             for name, value in checkpoint["model"].items() if name.startswith(prefix)
         )
+    if lora_rank:
+        for name, value in checkpoint["model"].items():
+            if name.startswith("actor.model."):
+                if name.endswith((".weight", ".bias")):
+                    torch.testing.assert_close(value, initial_state[name], rtol=0, atol=0)
+                else:
+                    assert not torch.equal(value, initial_state[name])
     assert not torch.equal(checkpoint["model"]["actor.log_std"], saved["model"]["actor.log_std"])
     assert (
         checkpoint["normalization"]["observation_count"] > saved["normalization"]["observation_count"]
@@ -343,6 +373,14 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(tmp_path, monkeyp
     final = torch.load(resumed.directory / "checkpoint.pt", weights_only=True)
     assert final["progress"]["env_steps"] == 15
     assert {int(state["step"].item()) for state in final["optimizer"]["state"].values()} == {10}
+    if lora_rank:
+        for name, value in final["model"].items():
+            if name.startswith("actor.model.") and name.endswith((".weight", ".bias")):
+                torch.testing.assert_close(value, initial_state[name], rtol=0, atol=0)
+        evaluation = run_evaluation(
+            resumed.directory / "checkpoint.pt", seed=10000, episodes=1, output_dir=tmp_path,
+        )
+        assert load_config(evaluation.directory / "config.yaml").model.lora_rank == lora_rank
 
 
 def test_interruption_preserves_last_completed_update(tmp_path, monkeypatch):

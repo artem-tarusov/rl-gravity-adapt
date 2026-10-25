@@ -5,6 +5,7 @@ from torch import Tensor, nn
 from torch.distributions import Independent, Normal
 
 from gravity_adapt.config import ModelConfig
+from gravity_adapt.lora import LoRALinear
 
 
 def _mlp(
@@ -33,6 +34,10 @@ class Actor(nn.Module):
         self.model = _mlp(
             observation_size, config.actor_hidden_sizes, action_size, output_gain=0.01
         )
+        if config.lora_rank:
+            for index, layer in enumerate(self.model):
+                if isinstance(layer, nn.Linear):
+                    self.model[index] = LoRALinear(layer, config.lora_rank)
         self.log_std = nn.Parameter(torch.zeros(action_size))
 
     def forward(self, observations: Tensor) -> Independent:

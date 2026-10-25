@@ -76,6 +76,7 @@ gravity_adapt/
     envs.py         # Humanoid creation, gravity, action clipping, vectorization
     evaluate.py     # Independent checkpoint evaluation and episode videos
     logging.py      # Training CSV logs and console progress
+    lora.py         # Frozen linear layers with trainable low-rank updates
     models.py       # Gaussian actor and separate value network
     normalization.py # Shared observation and discounted-return statistics
     ppo.py          # GAE and PPO minibatch updates
@@ -102,7 +103,7 @@ runs/               # Generated locally; ignored by Git
 ## Configuration and runs
 
 Training requires `--config`. The YAML file must provide all sections and
-fields; configuration classes define their types without fallback values.
+required fields. `model.lora_rank` is optional and defaults to `0` (disabled).
 Command-line overrides take precedence over the YAML values.
 
 The supplied `configs/earth.yaml` uses Earth gravity, four synchronous environments,
@@ -298,7 +299,7 @@ python -m gravity_adapt.train \
 
 Python callers can use `run_training(config, checkpoint=path, mode="finetune")`.
 Fine-tuning loads the actor, including `log_std`, the critic, and observation and
-return normalization statistics. All model parameters remain trainable. Both sets
+return normalization statistics. With LoRA disabled, all model parameters remain trainable. Both sets
 of normalization statistics continue updating from their saved counts during training.
 Discounted-return accumulators start at zero for the new environments, using the
 new configuration's `gamma`.
@@ -317,6 +318,27 @@ Evaluate saved checkpoints separately with the evaluation entry point.
 PPO settings and normalization conventions use
 [CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)
 as a reference. Running statistics use Gymnasium's `RunningMeanStd` implementation.
+
+### LoRA adaptation
+
+Use the same fine-tuning entry point with `model.lora_rank: 4`:
+
+```bash
+python -m gravity_adapt.train \
+    --config configs/mars_finetune.yaml --model.lora-rank 4 \
+    --checkpoint runs/EARTH_RUN_ID/checkpoint.pt --mode finetune
+```
+
+[LoRA](https://arxiv.org/abs/2106.09685) adds a trainable low-rank update to each
+actor linear layer, including the output layer. Base weights and biases are
+frozen; `log_std` and the entire critic remain trainable. The update is `B @ A`,
+with scaling fixed at 1 (`alpha = rank`). `A` uses Kaiming uniform initialization
+and `B` starts at zero, preserving the source policy before training.
+
+LoRA uses the existing PPO settings and normalization updates.
+Checkpoints store base weights and adapters
+together. Resume and evaluation reconstruct the adapters from the saved rank
+and use the existing commands.
 
 ## Independent evaluation
 

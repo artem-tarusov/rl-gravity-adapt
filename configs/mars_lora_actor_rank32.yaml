@@ -1,0 +1,29 @@
+environment:
+  gravity: [0.0, 0.0, -3.71]
+  num_envs: 4
+  max_episode_steps: 1000
+
+model:
+  actor_hidden_sizes: [256, 256]
+  critic_hidden_sizes: [256, 256]
+  lora_rank: 32
+
+run:
+  name: mars_lora_rank32
+  seed: 42
+  device: cpu
+  output_dir: runs
+  torch_threads: 1
+
+ppo:
+  total_steps: 5000000
+  rollout_steps: 2048
+  minibatch_size: 256
+  update_epochs: 5
+  learning_rate: 0.0001
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  entropy_coef: 0.0
+  critic_loss_weight: 0.5
+  max_grad_norm: 0.5

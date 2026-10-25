@@ -86,6 +86,10 @@ configs/
     earth.yaml
     mars.yaml
     mars_finetune.yaml
+    mars_lora_actor_rank4.yaml
+    mars_lora_actor_rank16.yaml
+    mars_lora_actor_rank32.yaml
+    mars_lora_actor_rank64.yaml
 notebooks/
     earth_pilot.ipynb
 tests/
@@ -321,11 +325,13 @@ as a reference. Running statistics use Gymnasium's `RunningMeanStd` implementati
 
 ### LoRA adaptation
 
+Actor LoRA experiments with a fully trainable critic: [rank 4](results/earth_to_mars_lora_actor_rank4/report.md) · [rank 16](results/earth_to_mars_lora_actor_rank16/report.md) · [rank 32](results/earth_to_mars_lora_actor_rank32/report.md) · [rank 64](results/earth_to_mars_lora_actor_rank64/report.md).
+
 Use the same fine-tuning entry point with `model.lora_rank: 4`:
 
 ```bash
 python -m gravity_adapt.train \
-    --config configs/mars_finetune.yaml --model.lora-rank 4 \
+    --config configs/mars_lora_actor_rank4.yaml \
     --checkpoint runs/EARTH_RUN_ID/checkpoint.pt --mode finetune
 ```
 

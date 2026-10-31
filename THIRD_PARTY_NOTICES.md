@@ -1,7 +1,7 @@
 # Third-party notices
 
-These notices apply to third-party portions only. No project license is granted
-for gravity-adapt's original contributions.
+These notices apply to third-party portions only. See [LICENSE](LICENSE) for
+the license covering gravity-adapt's original contributions.
 
 ## CleanRL
 

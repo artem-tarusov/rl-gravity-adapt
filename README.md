@@ -322,9 +322,10 @@ use the existing format and periodic saving mechanism. To continue interrupted
 fine-tuning, use its saved configuration and checkpoint with `--mode resume`.
 Evaluate saved checkpoints separately with the evaluation entry point.
 
-PPO settings and normalization conventions use
-[CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy)
-as a reference. Running statistics use Gymnasium's `RunningMeanStd` implementation.
+Parts of the PPO implementation are adapted from
+[CleanRL's continuous-action PPO](https://docs.cleanrl.dev/rl-algorithms/ppo/#ppo_continuous_actionpy).
+See [third-party notices](THIRD_PARTY_NOTICES.md)
+for attribution and license terms. Running statistics use Gymnasium's `RunningMeanStd` implementation.
 
 ### LoRA adaptation
 
@@ -467,3 +468,9 @@ to episode results. The recording test uses synthetic frames to avoid requiring
 a graphics context in the test suite.
 
 Environment behavior follows the [Gymnasium Humanoid documentation](https://gymnasium.farama.org/environments/mujoco/humanoid/).
+
+## Licensing
+
+No project license is currently granted for gravity-adapt's original contributions.
+Third-party portions retain their existing licenses; see
+[third-party notices](THIRD_PARTY_NOTICES.md).

@@ -330,6 +330,8 @@ as a reference. Running statistics use Gymnasium's `RunningMeanStd` implementati
 
 Actor LoRA experiments with a fully trainable critic: [rank 4](results/earth_to_mars_lora_actor_rank4/report.md) · [rank 16](results/earth_to_mars_lora_actor_rank16/report.md) · [rank 32](results/earth_to_mars_lora_actor_rank32/report.md) · [rank 64](results/earth_to_mars_lora_actor_rank64/report.md).
 
+Actor and critic LoRA experiment: [rank 64](results/earth_to_mars_lora_actor_critic_rank64/report.md).
+
 Use the same fine-tuning entry point with `model.actor_lora_rank: 4`:
 
 ```bash

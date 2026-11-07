@@ -55,7 +55,7 @@ python -m gravity_adapt.train --config configs/mars_lora_actor_rank64.yaml \
 ```
 
 For LoRA on both networks, use `configs/mars_lora_actor_critic_rank64.yaml`.
-Other actor ranks are listed below.
+Both variants have configurations and results for ranks 4, 16, 32, and 64 below.
 
 ### Evaluate a checkpoint
 
@@ -93,6 +93,9 @@ Reports include the protocol, per-seed summaries, and per-episode data.
 | Actor LoRA, rank 16 | [Configuration](configs/mars_lora_actor_rank16.yaml) | [Results](results/earth_to_mars_lora_actor_rank16/report.md) |
 | Actor LoRA, rank 32 | [Configuration](configs/mars_lora_actor_rank32.yaml) | [Results](results/earth_to_mars_lora_actor_rank32/report.md) |
 | Actor LoRA, rank 64 | [Configuration](configs/mars_lora_actor_rank64.yaml) | [Results](results/earth_to_mars_lora_actor_rank64/report.md) |
+| Actor + Critic LoRA, rank 4 | [Configuration](configs/mars_lora_actor_critic_rank4.yaml) | [Results](results/earth_to_mars_lora_actor_critic_rank4/report.md) |
+| Actor + Critic LoRA, rank 16 | [Configuration](configs/mars_lora_actor_critic_rank16.yaml) | [Results](results/earth_to_mars_lora_actor_critic_rank16/report.md) |
+| Actor + Critic LoRA, rank 32 | [Configuration](configs/mars_lora_actor_critic_rank32.yaml) | [Results](results/earth_to_mars_lora_actor_critic_rank32/report.md) |
 | Actor + Critic LoRA, rank 64 | [Configuration](configs/mars_lora_actor_critic_rank64.yaml) | [Results](results/earth_to_mars_lora_actor_critic_rank64/report.md) |
 
 ## License and acknowledgments

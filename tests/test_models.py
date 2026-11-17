@@ -1,5 +1,6 @@
 import math
 
+import pytest
 import torch
 
 from gravity_adapt.config import ModelConfig
@@ -37,3 +38,25 @@ def test_actor_and_critic_receive_separate_finite_gradients():
     for parameter in model.parameters():
         assert parameter.grad is not None
         assert torch.isfinite(parameter.grad).all()
+
+
+@pytest.mark.parametrize("network", ["actor", "critic"])
+def test_lora_requires_a_positive_rank(network):
+    config = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
+    setattr(config, f"{network}_adaptation", "lora")
+    with pytest.raises(ValueError, match="positive"):
+        ActorCritic(3, 2, config)
+
+
+@pytest.mark.parametrize("adaptation", ["full"])
+def test_explicit_adaptation_takes_precedence_over_unused_lora_ranks(adaptation):
+    config = ModelConfig(
+        actor_hidden_sizes=[8], critic_hidden_sizes=[8],
+        actor_adaptation=adaptation, critic_adaptation=adaptation,
+        actor_lora_rank=4, critic_lora_rank=4,
+    )
+    model = ActorCritic(3, 2, config)
+    assert not any("lora" in name for name, _ in model.named_parameters())
+    for network in (model.actor, model.critic):
+        assert network.model[0].weight.requires_grad == (adaptation == "full")
+        assert network.model[-1].weight.requires_grad

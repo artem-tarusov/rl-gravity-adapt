@@ -10,18 +10,25 @@ from gravity_adapt.models import ActorCritic
 from gravity_adapt.normalization import Normalizer
 
 
-@pytest.mark.parametrize("actor_lora_rank", [0, 4])
+@pytest.mark.parametrize("actor_adaptation,critic_adaptation", [
+    ("full", "full"), ("lora", "full"), ("lora", "lora"),
+])
 def test_checkpoint_resume_and_finetune_restore_selected_state(
-    tmp_path, monkeypatch, actor_lora_rank
+    tmp_path, monkeypatch, actor_adaptation, critic_adaptation
 ):
     config = load_config(Path(__file__).resolve().parents[1] / "configs" / "earth.yaml")
     config.model = ModelConfig(
-        actor_hidden_sizes=[8], critic_hidden_sizes=[8], actor_lora_rank=actor_lora_rank,
+        actor_hidden_sizes=[8], critic_hidden_sizes=[8],
+        actor_adaptation=actor_adaptation, critic_adaptation=critic_adaptation,
+        actor_lora_rank=4 if actor_adaptation == "lora" else 0,
+        critic_lora_rank=4 if critic_adaptation == "lora" else 0,
     )
     config.environment.num_envs = 2
     torch.manual_seed(42)
     model = ActorCritic(3, 2, config.model)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.ppo.learning_rate, eps=1e-5)
+    optimizer = torch.optim.Adam(
+        (p for p in model.parameters() if p.requires_grad), lr=config.ppo.learning_rate, eps=1e-5,
+    )
     normalizer = Normalizer(3, 2, config.ppo.gamma)
     normalizer.normalize_observations(np.array([[1.0, 2.0, 3.0], [3.0, 4.0, 5.0]]))
     normalizer.normalize_rewards(np.array([1.0, 2.0]), np.array([False, False]))
@@ -45,15 +52,18 @@ def test_checkpoint_resume_and_finetune_restore_selected_state(
     save_checkpoint(path, model, optimizer, normalizer, config, progress)
     legacy = torch.load(path, weights_only=True)
     legacy["config"]["model"].pop("actor_lora_rank")
-    if actor_lora_rank:
-        legacy["config"]["model"]["lora_rank"] = actor_lora_rank
-    legacy["config"]["model"].pop("critic_lora_rank")
+    if config.model.actor_lora_rank:
+        legacy["config"]["model"]["lora_rank"] = config.model.actor_lora_rank
+    for network in ("actor", "critic"):
+        legacy["config"]["model"].pop(f"{network}_adaptation")
     torch.save(legacy, path)
     saved_normalization = normalizer.state_dict()
     step(model, optimizer)
     expected_random = torch.rand(3)
     restored = ActorCritic(3, 2, config.model)
-    restored_optimizer = torch.optim.Adam(restored.parameters(), lr=1.0)
+    restored_optimizer = torch.optim.Adam(
+        (p for p in restored.parameters() if p.requires_grad), lr=1.0,
+    )
     restored_normalizer = Normalizer(3, 2, gamma=0.5)
     assert load_checkpoint(path, restored, restored_optimizer, restored_normalizer, config, mode="resume") == progress
     assert restored_normalizer.state_dict() == saved_normalization

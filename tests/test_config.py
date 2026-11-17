@@ -1,8 +1,9 @@
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
-from gravity_adapt.config import load_config, parse_config
+from gravity_adapt.config import ModelConfig, load_config, parse_config
 
 
 def test_cli_overrides_yaml_and_preserves_other_values():
@@ -33,8 +34,32 @@ def test_ppo_overrides():
 def test_actor_lora_rank_loading_and_cli_override(tmp_path, rank_key):
     source = Path(__file__).resolve().parents[1] / "configs" / "mars_lora_actor_rank4.yaml"
     path = tmp_path / "config.yaml"
-    path.write_text(source.read_text().replace("actor_lora_rank", rank_key))
+    legacy = source.read_text().replace("  actor_adaptation: lora\n", "")
+    path.write_text(legacy.replace("actor_lora_rank", rank_key))
     assert load_config(path).model.actor_lora_rank == 4
     config = parse_config(["--config", str(path), "--model.actor-lora-rank", "16"])
     assert config.model.actor_lora_rank == 16
     assert config.model.critic_lora_rank == 0
+    assert config.model.actor_adaptation == "lora"
+    assert config.model.critic_adaptation == "full"
+    overridden = parse_config([
+        "--config", str(path), "--model.actor-adaptation", "full",
+    ])
+    assert overridden.model.actor_adaptation == "full"
+
+
+@pytest.mark.parametrize("fields,actor,critic", [
+    ({}, "full", "full"),
+    ({"lora_rank": 4}, "lora", "full"),
+    ({"actor_lora_rank": 4, "critic_lora_rank": 4}, "lora", "lora"),
+    ({"actor_adaptation": "full", "actor_lora_rank": 4}, "full", "full"),
+])
+def test_legacy_model_config_preserves_explicit_modes(fields, actor, critic):
+    data = {"actor_hidden_sizes": [8], "critic_hidden_sizes": [8], **fields}
+    original = dict(data)
+    config = ModelConfig.from_dict(data)
+    assert config.actor_adaptation == actor
+    assert config.critic_adaptation == critic
+    assert data == original
+    assert "lora_rank" not in asdict(config)
+    assert ModelConfig.from_dict(asdict(config)) == config

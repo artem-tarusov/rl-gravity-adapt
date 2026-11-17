@@ -24,6 +24,10 @@ Run commands from the repository root. Settings are stored in [configs/](configs
 and can be overridden on the command line. The supplied training configurations
 use CPU and a budget of 5,000,000 transitions.
 
+`model.actor_adaptation` and `model.critic_adaptation` select `full` or `lora`
+independently. LoRA ranks apply only when the corresponding mode is `lora`.
+Older configurations and checkpoints are converted to these settings when loaded.
+
 Each training run saves its configuration, logs, and `checkpoint.pt` under `runs/`
 and prints the directory path. Checkpoints and videos are generated locally and
 are not included in the repository.

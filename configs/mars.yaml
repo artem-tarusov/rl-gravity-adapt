@@ -5,7 +5,9 @@ environment:
 
 model:
   actor_hidden_sizes: [256, 256]
+  actor_adaptation: full
   critic_hidden_sizes: [256, 256]
+  critic_adaptation: full
 
 run:
   name: mars_baseline

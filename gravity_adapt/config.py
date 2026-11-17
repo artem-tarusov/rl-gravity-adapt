@@ -22,6 +22,8 @@ class EnvironmentConfig:
 class ModelConfig:
     actor_hidden_sizes: list[int]
     critic_hidden_sizes: list[int]
+    actor_adaptation: Literal["full", "lora"] = "full"
+    critic_adaptation: Literal["full", "lora"] = "full"
     actor_lora_rank: int = 0
     critic_lora_rank: int = 0
 
@@ -30,6 +32,9 @@ class ModelConfig:
         data = dict(data)
         if "lora_rank" in data:
             data.setdefault("actor_lora_rank", data.pop("lora_rank"))
+        for network in ("actor", "critic"):
+            adaptation = "lora" if data.get(f"{network}_lora_rank", 0) else "full"
+            data.setdefault(f"{network}_adaptation", adaptation)
         return cls(**data)
 
 

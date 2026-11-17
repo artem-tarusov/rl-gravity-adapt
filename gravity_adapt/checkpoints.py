@@ -72,7 +72,7 @@ def load_checkpoint(
     if mode == "finetune":
         saved_model_config = ModelConfig.from_dict(checkpoint["config"]["model"])
         for network in ("actor", "critic"):
-            if not getattr(saved_model_config, f"{network}_lora_rank"):
+            if getattr(saved_model_config, f"{network}_adaptation") != "lora":
                 for name, value in getattr(model, network).state_dict().items():
                     if name.endswith((".lora_a", ".lora_b")):
                         state[f"{network}.{name}"] = value

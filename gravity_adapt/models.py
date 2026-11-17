@@ -34,7 +34,9 @@ class Actor(nn.Module):
         self.model = _mlp(
             observation_size, config.actor_hidden_sizes, action_size, output_gain=0.01
         )
-        if config.actor_lora_rank:
+        if config.actor_adaptation == "lora":
+            if config.actor_lora_rank <= 0:
+                raise ValueError("Actor LoRA requires a positive actor_lora_rank")
             for index, layer in enumerate(self.model):
                 if isinstance(layer, nn.Linear):
                     self.model[index] = LoRALinear(layer, config.actor_lora_rank)
@@ -50,7 +52,9 @@ class Critic(nn.Module):
     def __init__(self, observation_size: int, config: ModelConfig):
         super().__init__()
         self.model = _mlp(observation_size, config.critic_hidden_sizes, 1, output_gain=1.0)
-        if config.critic_lora_rank:
+        if config.critic_adaptation == "lora":
+            if config.critic_lora_rank <= 0:
+                raise ValueError("Critic LoRA requires a positive critic_lora_rank")
             for index, layer in enumerate(self.model):
                 if isinstance(layer, nn.Linear):
                     self.model[index] = LoRALinear(layer, config.critic_lora_rank)

@@ -5,7 +5,9 @@ environment:
 
 model:
   actor_hidden_sizes: [256, 256]
+  actor_adaptation: lora
   critic_hidden_sizes: [256, 256]
+  critic_adaptation: lora
   actor_lora_rank: 16
   critic_lora_rank: 16
 

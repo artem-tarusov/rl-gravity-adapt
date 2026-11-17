@@ -284,6 +284,8 @@ def test_finetuning_starts_new_training_on_mars_and_can_resume(
     source_model.load_state_dict(saved["model"])
     config.model.actor_lora_rank = actor_lora_rank
     config.model.critic_lora_rank = critic_lora_rank
+    config.model.actor_adaptation = "lora" if actor_lora_rank else "full"
+    config.model.critic_adaptation = "lora" if critic_lora_rank else "full"
     config.environment.gravity = [0.0, 0.0, -3.71]
     config.environment.num_envs = 3
     config.environment.max_episode_steps = 2

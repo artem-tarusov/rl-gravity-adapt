@@ -24,8 +24,8 @@ Run commands from the repository root. Settings are stored in [configs/](configs
 and can be overridden on the command line. The supplied training configurations
 use CPU and a budget of 5,000,000 transitions.
 
-`model.actor_adaptation` and `model.critic_adaptation` select `full` or `lora`
-independently. LoRA ranks apply only when the corresponding mode is `lora`.
+`model.actor_adaptation` and `model.critic_adaptation` select `full`, `last_layer`,
+or `lora` independently. LoRA ranks apply only when the corresponding mode is `lora`.
 Older configurations and checkpoints are converted to these settings when loaded.
 
 Each training run saves its configuration, logs, and `checkpoint.pt` under `runs/`
@@ -60,6 +60,13 @@ python -m gravity_adapt.train --config configs/mars_lora_actor_rank64.yaml \
 
 For LoRA on both networks, use `configs/mars_lora_actor_critic_rank64.yaml`.
 Both variants have configurations and results for ranks 4, 16, 32, and 64 below.
+
+### Adapt only the last layer
+
+Use `configs/mars_last_layer_actor.yaml` with the fine-tuning command to train
+the actor's output layer and `log_std`, with a fully trainable critic.
+Use `configs/mars_last_layer_actor_critic.yaml` to train only the output layers
+of both networks and `log_std`. Hidden-layer weights remain frozen.
 
 ### Evaluate a checkpoint
 

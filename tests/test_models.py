@@ -40,6 +40,40 @@ def test_actor_and_critic_receive_separate_finite_gradients():
         assert torch.isfinite(parameter.grad).all()
 
 
+@pytest.mark.parametrize("critic_adaptation", ["full", "last_layer"])
+def test_last_layer_training_preserves_source_outputs_and_frozen_weights(critic_adaptation):
+    torch.manual_seed(42)
+    config = ModelConfig(actor_hidden_sizes=[8, 8], critic_hidden_sizes=[8, 8])
+    source = ActorCritic(3, 2, config)
+    config.actor_adaptation = "last_layer"
+    config.critic_adaptation = critic_adaptation
+    model = ActorCritic(3, 2, config)
+    model.load_state_dict(source.state_dict())
+    observations = torch.randn(4, 3)
+    torch.testing.assert_close(
+        model.get_action_and_value(observations, explore=False),
+        source.get_action_and_value(observations, explore=False), rtol=0, atol=0,
+    )
+    trainable = {"actor.log_std", "actor.model.4.weight", "actor.model.4.bias"}
+    trainable.update(
+        {"critic.model.4.weight", "critic.model.4.bias"}
+        if critic_adaptation == "last_layer"
+        else {f"critic.{name}" for name, _ in model.critic.named_parameters()}
+    )
+    assert {name for name, p in model.named_parameters() if p.requires_grad} == trainable
+    optimizer = torch.optim.Adam(p for p in model.parameters() if p.requires_grad)
+    actions = model.actor(observations).mean.detach() + 0.5
+    _, log_prob, entropy, values = model.get_action_and_value(observations, actions)
+    (-log_prob.mean() - 0.1 * entropy.mean() + (values - 1).square().mean()).backward()
+    optimizer.step()
+    for name, parameter in model.named_parameters():
+        if name in trainable:
+            assert not torch.equal(parameter, source.state_dict()[name])
+        else:
+            assert parameter.grad is None
+            torch.testing.assert_close(parameter, source.state_dict()[name], rtol=0, atol=0)
+
+
 @pytest.mark.parametrize("network", ["actor", "critic"])
 def test_lora_requires_a_positive_rank(network):
     config = ModelConfig(actor_hidden_sizes=[8], critic_hidden_sizes=[8])
@@ -48,7 +82,7 @@ def test_lora_requires_a_positive_rank(network):
         ActorCritic(3, 2, config)
 
 
-@pytest.mark.parametrize("adaptation", ["full"])
+@pytest.mark.parametrize("adaptation", ["full", "last_layer"])
 def test_explicit_adaptation_takes_precedence_over_unused_lora_ranks(adaptation):
     config = ModelConfig(
         actor_hidden_sizes=[8], critic_hidden_sizes=[8],

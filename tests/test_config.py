@@ -43,16 +43,22 @@ def test_actor_lora_rank_loading_and_cli_override(tmp_path, rank_key):
     assert config.model.actor_adaptation == "lora"
     assert config.model.critic_adaptation == "full"
     overridden = parse_config([
-        "--config", str(path), "--model.actor-adaptation", "full",
+        "--config", str(path), "--model.actor-adaptation", "last_layer",
     ])
-    assert overridden.model.actor_adaptation == "full"
+    assert overridden.model.actor_adaptation == "last_layer"
 
 
 @pytest.mark.parametrize("fields,actor,critic", [
     ({}, "full", "full"),
     ({"lora_rank": 4}, "lora", "full"),
     ({"actor_lora_rank": 4, "critic_lora_rank": 4}, "lora", "lora"),
+    ({"actor_last_layer_only": True}, "last_layer", "full"),
+    (
+        {"actor_last_layer_only": True, "critic_last_layer_only": True}, "last_layer", "last_layer",
+    ),
+    ({"actor_lora_rank": 4, "actor_last_layer_only": False}, "lora", "full"),
     ({"actor_adaptation": "full", "actor_lora_rank": 4}, "full", "full"),
+    ({"actor_adaptation": "full", "actor_last_layer_only": True}, "full", "full"),
 ])
 def test_legacy_model_config_preserves_explicit_modes(fields, actor, critic):
     data = {"actor_hidden_sizes": [8], "critic_hidden_sizes": [8], **fields}
@@ -61,5 +67,6 @@ def test_legacy_model_config_preserves_explicit_modes(fields, actor, critic):
     assert config.actor_adaptation == actor
     assert config.critic_adaptation == critic
     assert data == original
+    assert not any(key.endswith("last_layer_only") for key in asdict(config))
     assert "lora_rank" not in asdict(config)
     assert ModelConfig.from_dict(asdict(config)) == config

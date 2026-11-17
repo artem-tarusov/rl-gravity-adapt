@@ -34,7 +34,10 @@ class Actor(nn.Module):
         self.model = _mlp(
             observation_size, config.actor_hidden_sizes, action_size, output_gain=0.01
         )
-        if config.actor_adaptation == "lora":
+        if config.actor_adaptation == "last_layer":
+            self.model.requires_grad_(False)
+            self.model[-1].requires_grad_(True)
+        elif config.actor_adaptation == "lora":
             if config.actor_lora_rank <= 0:
                 raise ValueError("Actor LoRA requires a positive actor_lora_rank")
             for index, layer in enumerate(self.model):
@@ -52,7 +55,10 @@ class Critic(nn.Module):
     def __init__(self, observation_size: int, config: ModelConfig):
         super().__init__()
         self.model = _mlp(observation_size, config.critic_hidden_sizes, 1, output_gain=1.0)
-        if config.critic_adaptation == "lora":
+        if config.critic_adaptation == "last_layer":
+            self.model.requires_grad_(False)
+            self.model[-1].requires_grad_(True)
+        elif config.critic_adaptation == "lora":
             if config.critic_lora_rank <= 0:
                 raise ValueError("Critic LoRA requires a positive critic_lora_rank")
             for index, layer in enumerate(self.model):

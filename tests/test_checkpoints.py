@@ -12,6 +12,7 @@ from gravity_adapt.normalization import Normalizer
 
 @pytest.mark.parametrize("actor_adaptation,critic_adaptation", [
     ("full", "full"), ("lora", "full"), ("lora", "lora"),
+    ("last_layer", "full"), ("last_layer", "last_layer"),
 ])
 def test_checkpoint_resume_and_finetune_restore_selected_state(
     tmp_path, monkeypatch, actor_adaptation, critic_adaptation
@@ -55,7 +56,9 @@ def test_checkpoint_resume_and_finetune_restore_selected_state(
     if config.model.actor_lora_rank:
         legacy["config"]["model"]["lora_rank"] = config.model.actor_lora_rank
     for network in ("actor", "critic"):
-        legacy["config"]["model"].pop(f"{network}_adaptation")
+        adaptation = legacy["config"]["model"].pop(f"{network}_adaptation")
+        if adaptation == "last_layer":
+            legacy["config"]["model"][f"{network}_last_layer_only"] = True
     torch.save(legacy, path)
     saved_normalization = normalizer.state_dict()
     step(model, optimizer)

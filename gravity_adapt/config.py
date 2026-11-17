@@ -22,8 +22,8 @@ class EnvironmentConfig:
 class ModelConfig:
     actor_hidden_sizes: list[int]
     critic_hidden_sizes: list[int]
-    actor_adaptation: Literal["full", "lora"] = "full"
-    critic_adaptation: Literal["full", "lora"] = "full"
+    actor_adaptation: Literal["full", "last_layer", "lora"] = "full"
+    critic_adaptation: Literal["full", "last_layer", "lora"] = "full"
     actor_lora_rank: int = 0
     critic_lora_rank: int = 0
 
@@ -34,6 +34,8 @@ class ModelConfig:
             data.setdefault("actor_lora_rank", data.pop("lora_rank"))
         for network in ("actor", "critic"):
             adaptation = "lora" if data.get(f"{network}_lora_rank", 0) else "full"
+            if data.pop(f"{network}_last_layer_only", False):
+                adaptation = "last_layer"
             data.setdefault(f"{network}_adaptation", adaptation)
         return cls(**data)
 

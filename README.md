@@ -100,6 +100,8 @@ Reports include the protocol, per-seed summaries, and per-episode data.
 | Mars baseline | [mars.yaml](configs/mars.yaml) | [Results](results/mars_baseline/report.md) |
 | Earth → Mars without adaptation | Earth checkpoints evaluated on Mars | [Results](results/earth_to_mars/report.md) |
 | Earth → Mars full fine-tuning | [mars_finetune.yaml](configs/mars_finetune.yaml) | [Results](results/earth_to_mars_finetune/report.md) |
+| Actor last-layer adaptation | [Configuration](configs/mars_last_layer_actor.yaml) | [Results](results/earth_to_mars_last_layer_actor/report.md) |
+| Actor + Critic last-layer adaptation | [Configuration](configs/mars_last_layer_actor_critic.yaml) | [Results](results/earth_to_mars_last_layer_actor_critic/report.md) |
 | Actor LoRA, rank 4 | [Configuration](configs/mars_lora_actor_rank4.yaml) | [Results](results/earth_to_mars_lora_actor_rank4/report.md) |
 | Actor LoRA, rank 16 | [Configuration](configs/mars_lora_actor_rank16.yaml) | [Results](results/earth_to_mars_lora_actor_rank16/report.md) |
 | Actor LoRA, rank 32 | [Configuration](configs/mars_lora_actor_rank32.yaml) | [Results](results/earth_to_mars_lora_actor_rank32/report.md) |
